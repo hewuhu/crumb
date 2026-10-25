@@ -1,7 +1,7 @@
 module;
 #include <algorithm>
-export module crumb.time;
-import crumb.type;
+export module crumb.core.time;
+import crumb.core.types;
 
 export namespace crumb {
 
@@ -56,9 +56,9 @@ public:
   double Alpha() { return m_accumulator / m_fixedDelta; }
 
   bool IsPaused() const { return m_paused; }
-  void Paused() { m_paused = true; }
-  void Resume() { m_paused = false; }
   void SetPaused(bool value) { m_paused = value; }
+  void Pause() { m_paused = true; }
+  void Resume() { m_paused = false; }
 };
 
 }

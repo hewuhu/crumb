@@ -1,8 +1,7 @@
 module;
 #include <cmath>
-
-export module crumb.math;
-import crumb.type;
+export module crumb.core.math;
+import crumb.core.types;
 
 // Small 2D math types used by C++ engine code.
 // Game scripts normally use plain Lua numbers instead.
@@ -95,13 +94,13 @@ inline float Lerp(float a, float b, float t) {
   return a + (b - a) * t;
 }
 
-inline float Approach(float current, float target, float maxDelta) {
-  if (maxDelta < 0.0f)
-    maxDelta = -maxDelta;
+inline float Approach(float current, float target, float max_delta) {
+  if (max_delta < 0.0f)
+    max_delta = -max_delta;
 
   if (current < target)
-    return current + maxDelta < target ? current + maxDelta : target;
-  return current - maxDelta > target ? current - maxDelta : target;
+    return current + max_delta < target ? current + max_delta : target;
+  return current - max_delta > target ? current - max_delta : target;
 }
 
 inline float Wrap(float value, float lo, float hi) {

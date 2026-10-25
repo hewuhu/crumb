@@ -1,196 +1,126 @@
 module;
-#include <print>
 #include <format>
-#include <cstdlib>
-#include <cstring>
+#include <ostream>
+#include <string>
+#include <utility>
 
-#ifdef _WIN32
-#include <io.h>
-#include <windows.h>
-#else
-#include <unistd.h>
-#endif
-
-export module crumb.logger;
-import crumb.type;
+#include <modlog/modlog.hpp>
+export module crumb.core.log;
 
 export namespace crumb {
 
-enum class Level {
-  Debug,
-  Info,
-  Warn,
-  Error,
-};
-
-struct AnsiColor {
-  string_view code;
-};
-
-inline constexpr AnsiColor A_White {"\x1b[97m"};
-inline constexpr AnsiColor A_Red   {"\x1b[31m"};
-inline constexpr AnsiColor A_Green {"\x1b[32m"};
-inline constexpr AnsiColor A_Reset {"\x1b[0m"};
-inline constexpr AnsiColor A_Bule  {"\x1b[94m"};
-
-} // namespace crumb
-
-namespace {
-
-using namespace crumb;
-
-constexpr string_view ColorOf(Level lv) noexcept {
-  switch (lv) {
-    case Level::Debug: return "\x1b[90m";  // 亮黑（灰）
-    case Level::Info:  return "\x1b[32m";  // 绿
-    case Level::Warn:  return "\x1b[33m";  // 黄
-    case Level::Error: return "\x1b[31m";  // 红
-  }
-  return {};
-}
-
-constexpr string_view Tag(Level lv) noexcept {
-  switch (lv) {
-    case Level::Debug: return "[Debug] ";
-    case Level::Info:  return "[Info]  ";
-    case Level::Warn:  return "[Warn]  ";
-    case Level::Error: return "[Error] ";
-  }
-  return "[?]    ";
-}
-
-inline bool IsTty(std::FILE* f) noexcept {
-#ifdef _WIN32
-  return ::_isatty(::_fileno(f)) != 0;
-#else
-  return ::isatty(::fileno(f)) != 0;
-#endif
-}
-
-inline void EnableVT() noexcept {
-#ifdef _WIN32
-  HANDLE h = ::GetStdHandle(STD_OUTPUT_HANDLE);
-  if (h == INVALID_HANDLE_VALUE) return;
-  DWORD mode = 0;
-  if (!::GetConsoleMode(h, &mode)) return;
-  if (!(mode & ENABLE_VIRTUAL_TERMINAL_PROCESSING))
-    ::SetConsoleMode(h, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
-#endif
-}
-
-inline bool DetectColors() noexcept {
-  auto HasEnv = [](const char* name) -> bool {
-#ifdef _WIN32
-    char*  buf  = nullptr;
-    size_t len  = 0;
-    if (::_dupenv_s(&buf, &len, name) != 0 || buf == nullptr) {
-      std::free(buf);
-      return false;
-    }
-    std::free(buf);
-    return true;
-#else
-    return std::getenv(name) != nullptr;
-#endif
-  };
-
-  auto GetEnv = [](const char* name) -> const char* {
-#ifdef _WIN32
-    static thread_local char* buf = nullptr;
-    if (buf) { std::free(buf); buf = nullptr; }
-    size_t len = 0;
-    if (::_dupenv_s(&buf, &len, name) != 0) return nullptr;
-    return buf;
-#else
-    return std::getenv(name);
-#endif
-  };
-
-  if (HasEnv("NO_COLOR"))
-    return false;
-
-  if (HasEnv("FORCE_COLOR"))
-    return true;
-
-  if (const char* term = GetEnv("TERM");
-      term != nullptr && std::strcmp(term, "dumb") == 0)
-    return false;
-
-  EnableVT();
-  return IsTty(stdout);
-}
-
-inline bool ColorsEnabled() noexcept {
-  static const bool enabled = DetectColors();
-  return enabled;
-}
-
-} // namespace
-
-
-export namespace crumb {
-
+// Thin wrapper over modlog. Two things it fixes:
+//   1. the level check happens BEFORE std::format, so disabled logs cost one compare;
+//   2. one place to flip the global level / stream / prefix.
+// Not thread-safe; modlog itself is not synchronized either.
 class Logger {
-private:
-  inline static Level m_minLevel = Level::Debug;
+public:
+  Logger() = delete;
 
-  template <typename... Args>
-  static void Emit(Level lv, std::format_string<Args...> fmt, Args&&... args) {
-    auto body = std::format(fmt, std::forward<Args>(args)...);
-    if (ColorsEnabled()) {
-      if (lv == Level::Error) {
-        std::println("{}{}{}{}", ColorOf(lv), Tag(lv), body, A_Reset.code);
-      } else {
-        std::println("{}{}{}{}", ColorOf(lv), Tag(lv), A_Reset.code, body);
-      }
-    } else {
-      std::println("{}{}", Tag(lv), body);
-    }
+  static void SetLevel(modlog::LogLevel level) {
+    modlog::modlog_default.minlog = level;
   }
 
-public:
-  static void WriteLine(AnsiColor color, string_view body) {
-  if (ColorsEnabled())
-    std::println("{}{}{}", color.code, body, A_Reset.code);
-  else
-    std::println("{}", body);
+  static modlog::LogLevel Level() {
+    return modlog::modlog_default.minlog;
+  }
+
+  static void SetOutput(std::ostream* stream) {
+    modlog::modlog_default.os = stream;
+  }
+
+  static void SetPrefix(bool enabled) {
+    modlog::modlog_default.prefix = enabled;
+  }
+
+  static void Flush() {
+    if (modlog::modlog_default.os != nullptr)
+      modlog::modlog_default.os->flush();
+  }
+
+  static bool Enabled(modlog::LogLevel level) {
+    const auto minimum = modlog::modlog_default.minlog;
+    if (minimum == modlog::LogLevel::Disabled)
+      return false;
+#ifdef NDEBUG
+    if (level < modlog::LogLevel::Info)
+      return false;
+#endif
+    return level >= minimum;
   }
 
   template <typename... Args>
   static void Debug(std::format_string<Args...> fmt, Args&&... args) {
-    if (Level::Debug < m_minLevel) return;
-    Emit(Level::Debug, fmt, std::forward<Args>(args)...);
+    Emit(modlog::LogLevel::Debug, fmt, std::forward<Args>(args)...);
   }
 
   template <typename... Args>
   static void Info(std::format_string<Args...> fmt, Args&&... args) {
-    if (Level::Info < m_minLevel) return;
-    Emit(Level::Info, fmt, std::forward<Args>(args)...);
+    Emit(modlog::LogLevel::Info, fmt, std::forward<Args>(args)...);
   }
 
   template <typename... Args>
   static void Warn(std::format_string<Args...> fmt, Args&&... args) {
-    if (Level::Warn < m_minLevel) return;
-    Emit(Level::Warn, fmt, std::forward<Args>(args)...);
+    Emit(modlog::LogLevel::Warning, fmt, std::forward<Args>(args)...);
   }
 
   template <typename... Args>
   static void Error(std::format_string<Args...> fmt, Args&&... args) {
-    if (Level::Error < m_minLevel) return;
-    Emit(Level::Error, fmt, std::forward<Args>(args)...);
+    Emit(modlog::LogLevel::Error, fmt, std::forward<Args>(args)...);
   }
 
+  template <typename... Args>
+  static void Log(modlog::LogLevel level, std::format_string<Args...> fmt, Args&&... args) {
+    Emit(level, fmt, std::forward<Args>(args)...);
+  }
+
+  template <typename Component, typename... Args>
+  static void DebugFor(Component* obj, std::format_string<Args...> fmt, Args&&... args) {
+    EmitFor(modlog::LogLevel::Debug, obj, fmt, std::forward<Args>(args)...);
+  }
+
+  template <typename Component, typename... Args>
+  static void InfoFor(Component* obj, std::format_string<Args...> fmt, Args&&... args) {
+    EmitFor(modlog::LogLevel::Info, obj, fmt, std::forward<Args>(args)...);
+  }
+
+  template <typename Component, typename... Args>
+  static void WarnFor(Component* obj, std::format_string<Args...> fmt, Args&&... args) {
+    EmitFor(modlog::LogLevel::Warning, obj, fmt, std::forward<Args>(args)...);
+  }
+
+  template <typename Component, typename... Args>
+  static void ErrorFor(Component* obj, std::format_string<Args...> fmt, Args&&... args) {
+    EmitFor(modlog::LogLevel::Error, obj, fmt, std::forward<Args>(args)...);
+  }
+
+  template <typename Component, typename... Args>
+  static void LogFor(modlog::LogLevel level, Component* obj, std::format_string<Args...> fmt,
+                     Args&&... args) {
+    EmitFor(level, obj, fmt, std::forward<Args>(args)...);
+  }
+
+private:
+  template <typename... Args>
+  static void Emit(modlog::LogLevel level, std::format_string<Args...> fmt, Args&&... args) {
+    if (!Enabled(level))
+      return;
+    // MSVC modules: the free operator<<(std::ostream&, std::string) declared by
+    // <string> lives in the global module fragment and is not visible when this
+    // template is instantiated in another module unit. Passing a C string uses
+    // the basic_ostream member overload, which is always visible.
+    const std::string text = std::format(fmt, std::forward<Args>(args)...);
+    modlog::Log(level) << text.c_str();
+  }
+
+  template <typename Component, typename... Args>
+  static void EmitFor(modlog::LogLevel level, Component* obj, std::format_string<Args...> fmt,
+                      Args&&... args) {
+    if (level == modlog::LogLevel::Disabled)
+      return;
+    const std::string text = std::format(fmt, std::forward<Args>(args)...);
+    modlog::Log(level, obj) << text.c_str();
+  }
 };
-
-template <typename... Args>
-void Println(AnsiColor color, std::format_string<Args...> fmt, Args&&... args) {
-  auto body = std::format(fmt, std::forward<Args>(args)...);
-  Logger::WriteLine(color, body);
-}
-
-template <typename... Args>
-void Println(std::format_string<Args...> fmt, Args&&... args) {
-  Println(A_White, fmt, std::forward<Args>(args)...);
-}
 
 } // namespace crumb

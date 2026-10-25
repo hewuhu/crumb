@@ -2,68 +2,77 @@ module;
 #include <cstring>
 #include <string_view>
 #include <utility>
+
 #include <sokol/sokol_app.h>
-export module crumb.input;
-import crumb.type;
+export module crumb.platform.input;
+import crumb.core.types;
 
-constexpr int kMaxKeys    = 512;
-constexpr int kMouseCount = 3;
+export namespace crumb::input {
 
+inline constexpr int MAX_KEYS    = 512;
+inline constexpr int MOUSE_COUNT = 3;
+
+// Device state owned by the window (WindowContext), never a free global.
 struct InputState {
-  bool  keyDown[kMaxKeys] {};
-  bool  keyPressed[kMaxKeys] {};
-  bool  keyReleased[kMaxKeys] {};
-  bool  mouseDown[kMouseCount] {};
-  bool  mousePressed[kMouseCount] {};
-  bool  mouseReleased[kMouseCount] {};
+  bool  keyDown[MAX_KEYS] {};
+  bool  keyPressed[MAX_KEYS] {};
+  bool  keyReleased[MAX_KEYS] {};
+  bool  mouseDown[MOUSE_COUNT] {};
+  bool  mousePressed[MOUSE_COUNT] {};
+  bool  mouseReleased[MOUSE_COUNT] {};
   float mouseX = 0.0f;
   float mouseY = 0.0f;
 };
 
-InputState state;
+// Map a friendly key name ("left", "a", "space") to a sokol key code.
+int   KeyCode(string_view name);
+// Held, pressed this frame, released this frame.
+bool  KeyHeld(const InputState& state, int key);
+bool  KeyPressed(const InputState& state, int key);
+bool  KeyReleased(const InputState& state, int key);
 
-void ClearTransient() {
+// Mouse position is in framebuffer pixels.
+float MouseX(const InputState& state);
+float MouseY(const InputState& state);
+bool  MouseDown(const InputState& state, int button);
+bool  MousePressed(const InputState& state, int button);
+bool  MouseReleased(const InputState& state, int button);
+
+// Reset all input state (window focus loss / startup).
+void Reset(InputState& state);
+// Clear per-frame pressed/released flags.
+void EndFrame(InputState& state);
+void HandleEvent(InputState& state, const sapp_event* event);
+
+} // namespace crumb::input
+
+namespace crumb::input {
+
+namespace {
+
+void ClearTransient(InputState& state) {
   std::memset(state.keyPressed,    0, sizeof(state.keyPressed));
   std::memset(state.keyReleased,   0, sizeof(state.keyReleased));
   std::memset(state.mousePressed,  0, sizeof(state.mousePressed));
   std::memset(state.mouseReleased, 0, sizeof(state.mouseReleased));
 }
 
-void ClearAll() {
+void ClearAll(InputState& state) {
   std::memset(&state, 0, sizeof(state));
 }
 
-export namespace crumb::input {
+} // namespace
 
-// Map a friendly key name ("left", "a", "space") to a sokol key code.
-int   KeyCode(string_view name);
-// Held, pressed this frame, released this frame.
-bool  KeyHeld(int key);
-bool  KeyPressed(int key);
-bool  KeyReleased(int key);
-
-// Mouse position is in framebuffer pixels.
-float MouseX();
-float MouseY();
-bool  MouseDown(int button);
-bool  MousePressed(int button);
-bool  MouseReleased(int button);
-
-// Reset all input state (window focus loss / startup).
-void Reset();
-// Clear per-frame pressed/released flags.
-void EndFrame();
-void HandleEvent(const sapp_event* event);
-} // namespace crumb::input
-
-namespace crumb::input {
 int KeyCode(string_view name) {
   if (name.size() == 1) {
-    const char c = name[0];
-    if (c >= 'a' && c <= 'z') return SAPP_KEYCODE_A + (c - 'a');
-    if (c >= '0' && c <= '9') return SAPP_KEYCODE_0 + (c - '0');
+    const char character = name[0];
+    if (character >= 'a' && character <= 'z')
+      return SAPP_KEYCODE_A + (character - 'a');
+    if (character >= '0' && character <= '9')
+      return SAPP_KEYCODE_0 + (character - '0');
   }
-  static constexpr std::pair<string_view, int> kTable[] = {
+
+  static constexpr std::pair<string_view, int> KEY_TABLE[] = {
     {"left",      SAPP_KEYCODE_LEFT},
     {"right",     SAPP_KEYCODE_RIGHT},
     {"up",        SAPP_KEYCODE_UP},
@@ -77,65 +86,86 @@ int KeyCode(string_view name) {
     {"ctrl",      SAPP_KEYCODE_LEFT_CONTROL},
     {"alt",       SAPP_KEYCODE_LEFT_ALT},
   };
-  for (auto [k, v] : kTable)
-    if (name == k) return v;
+
+  for (auto [key_name, key_value] : KEY_TABLE)
+    if (name == key_name)
+      return key_value;
+
   return -1;
 }
 
-bool KeyHeld(int k)     { return k >= 0 && k < kMaxKeys && state.keyDown[k]; }
-bool KeyPressed(int k)  { return k >= 0 && k < kMaxKeys && state.keyPressed[k]; }
-bool KeyReleased(int k) { return k >= 0 && k < kMaxKeys && state.keyReleased[k]; }
+bool KeyHeld(const InputState& state, int key) {
+  return key >= 0 && key < MAX_KEYS && state.keyDown[key];
+}
 
-float MouseX() { return state.mouseX; }
-float MouseY() { return state.mouseY; }
+bool KeyPressed(const InputState& state, int key) {
+  return key >= 0 && key < MAX_KEYS && state.keyPressed[key];
+}
 
-bool MouseDown(int b)     { return b >= 0 && b < kMouseCount && state.mouseDown[b]; }
-bool MousePressed(int b)  { return b >= 0 && b < kMouseCount && state.mousePressed[b]; }
-bool MouseReleased(int b) { return b >= 0 && b < kMouseCount && state.mouseReleased[b]; }
+bool KeyReleased(const InputState& state, int key) {
+  return key >= 0 && key < MAX_KEYS && state.keyReleased[key];
+}
 
-void Reset()    { ClearAll(); }
-void EndFrame() { ClearTransient(); }
+float MouseX(const InputState& state) { return state.mouseX; }
+float MouseY(const InputState& state) { return state.mouseY; }
 
-void HandleEvent(const sapp_event* e) {
-  switch (e->type) {
+bool MouseDown(const InputState& state, int button) {
+  return button >= 0 && button < MOUSE_COUNT && state.mouseDown[button];
+}
+
+bool MousePressed(const InputState& state, int button) {
+  return button >= 0 && button < MOUSE_COUNT && state.mousePressed[button];
+}
+
+bool MouseReleased(const InputState& state, int button) {
+  return button >= 0 && button < MOUSE_COUNT && state.mouseReleased[button];
+}
+
+void Reset(InputState& state)    { ClearAll(state); }
+void EndFrame(InputState& state) { ClearTransient(state); }
+
+void HandleEvent(InputState& state, const sapp_event* event) {
+  switch (event->type) {
     case SAPP_EVENTTYPE_KEY_DOWN:
-      if (e->key_code < kMaxKeys) {
-        if (!e->key_repeat) state.keyPressed[e->key_code] = true;
-        state.keyDown[e->key_code] = true;
+      if (event->key_code < MAX_KEYS) {
+        if (!event->key_repeat)
+          state.keyPressed[event->key_code] = true;
+        state.keyDown[event->key_code] = true;
       }
       break;
 
     case SAPP_EVENTTYPE_KEY_UP:
-      if (e->key_code < kMaxKeys) {
-        state.keyDown[e->key_code]     = false;
-        state.keyReleased[e->key_code] = true;
+      if (event->key_code < MAX_KEYS) {
+        state.keyDown[event->key_code]     = false;
+        state.keyReleased[event->key_code] = true;
       }
       break;
 
     case SAPP_EVENTTYPE_MOUSE_MOVE:
-      state.mouseX = e->mouse_x;
-      state.mouseY = e->mouse_y;
+      state.mouseX = event->mouse_x;
+      state.mouseY = event->mouse_y;
       break;
 
     case SAPP_EVENTTYPE_MOUSE_DOWN:
-      if (e->mouse_button < kMouseCount) {
-        state.mouseDown[e->mouse_button]    = true;
-        state.mousePressed[e->mouse_button] = true;
+      if (event->mouse_button < MOUSE_COUNT) {
+        state.mouseDown[event->mouse_button]    = true;
+        state.mousePressed[event->mouse_button] = true;
       }
       break;
 
     case SAPP_EVENTTYPE_MOUSE_UP:
-      if (e->mouse_button < kMouseCount) {
-        state.mouseDown[e->mouse_button]     = false;
-        state.mouseReleased[e->mouse_button] = true;
+      if (event->mouse_button < MOUSE_COUNT) {
+        state.mouseDown[event->mouse_button]     = false;
+        state.mouseReleased[event->mouse_button] = true;
       }
       break;
 
     case SAPP_EVENTTYPE_UNFOCUSED:
-      ClearAll();
+      ClearAll(state);
       break;
 
-    default: break;
+    default:
+      break;
   }
 }
 

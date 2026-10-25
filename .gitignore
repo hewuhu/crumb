@@ -1,9 +1,10 @@
-# Xmake cache
+# xmake
 .xmake/
-build/
+build*/
 
-# MacOS Cache
+# local docs, not tracked
+docs/
+*.md
+
 .DS_Store
-
-docs
 .dsh-acl-recovery

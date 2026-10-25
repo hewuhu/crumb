@@ -1,0 +1,91 @@
+export module crumb.app.runtime;
+
+import crumb.core.types;
+import crumb.core.error;
+import crumb.core.time;
+import crumb.gfx.renderer;
+import crumb.platform.input;
+import crumb.platform.vfs;
+import crumb.platform.window;
+import crumb.script.lua;
+
+export namespace crumb {
+
+struct ProjectConfig {
+  // Window title, normally the project name.
+  string title = "crumb";
+  // Logical names inside the VFS ("main.lua" / "sprites.png").
+  string mainScript = "main.lua";
+  string spritesPath = "sprites.png";
+  // Disk directory, .pak file, or executable with a pak footer.
+  vfs::SourceKind sourceKind = vfs::SourceKind::DISK;
+  string sourcePath;
+  // Logical game resolution and sprite grid.
+  i32 width = 320;
+  i32 height = 180;
+  i32 spriteSize = 16;
+  i32 windowScale = 2;
+  // Fixed-step settings for _fixed_update.
+  i32 fixedFps = 60;
+  i32 maxFixedSteps = 5;
+};
+
+class Runtime {
+public:
+  explicit Runtime(ProjectConfig config);
+  ~Runtime() = default;
+
+  Runtime(const Runtime&) = delete;
+  Runtime& operator=(const Runtime&) = delete;
+  Runtime(Runtime&&) = delete;
+  Runtime& operator=(Runtime&&) = delete;
+
+  // Fills the window hooks. Call before RunBlocking() or MakeDesc().
+  void Prepare();
+
+  // Editor path: create the window and block until the game quits.
+  int RunBlocking();
+
+  // Template path: sokol_main() returns these to sokol-app instead of blocking.
+  win::WindowContext& Window();
+  win::WindowConfig MakeWindowConfig() const;
+
+private:
+  // Sokol-app callbacks; user_data is the Runtime instance.
+  static void OnInit(void* user_data);
+  static void OnFrame(void* user_data, double raw_dt);
+  static void OnCleanup(void* user_data);
+
+  // Called once after the window exists.
+  void Start();
+  // One frame: fixed updates, _update, then _draw.
+  void Frame(double raw_dt);
+  // Optional _cleanup plus renderer shutdown.
+  void Cleanup();
+  // Print an error and ask the window to close.
+  void Fail(string_view message);
+
+  // Owned runtime objects. Lua closes before the renderer on destruction.
+  ProjectConfig m_config;
+  Renderer m_renderer;
+  LuaVM m_lua;
+  Time m_time;
+  vfs::Vfs m_vfs;
+  win::WindowContext m_window;
+
+  bool m_started = false;
+  bool m_failed = false;
+  bool m_hasFixedUpdate = false;
+  bool m_hasUpdate = false;
+  bool m_hasDraw = false;
+  bool m_hasCleanup = false;
+};
+
+// Resolves a project directory or a main.lua path, reads crumb.cfg, and fills
+// the config. Shared by the editor CLI and the exported template.
+Result<ProjectConfig> ResolveProject(string_view path);
+
+// Editor helper: resolve `path` and run it blocking until the window closes.
+int RunProject(string_view path);
+
+} // namespace crumb

@@ -1,12 +1,11 @@
 module;
 #include <vector>
 
-#define SOKOL_GLCORE
 #include <sokol/sokol_gfx.h>
 
-export module crumb.renderer;
-import crumb.type;
-
+export module crumb.gfx.renderer;
+import crumb.core.types;
+import crumb.gfx.color;
 
 export namespace crumb {
 
@@ -22,34 +21,35 @@ public:
   Renderer& operator=(Renderer&&) = delete;
 
   // Create GPU resources for a logical game resolution.
-  bool Init(i32 width, i32 height, i32 spriteSize);
+  bool Init(i32 width, i32 height, i32 sprite_size);
   // Release all sokol resources.
   void Shutdown();
 
   bool Ready() const { return m_ready; }
 
-  i32 GameWidth()  const { return to_i32(m_gameWidth); }
-  i32 GameHeight() const { return to_i32(m_gameHeight); }
-  i32 SpriteSize() const { return to_i32(m_spriteSize); }
+  i32 GameWidth()  const { return m_gameWidth; }
+  i32 GameHeight() const { return m_gameHeight; }
+  i32 SpriteSize() const { return m_spriteSize; }
 
   void SetClearColor(Color color) { m_clearColor = color; }
 
   // Start a frame and compute the letterboxed viewport.
-  void BeginFrame(i32 windowWidth, i32 windowHeight);
+  void BeginFrame(i32 window_width, i32 window_height);
   // Upload vertices, draw batches, and present.
   void EndFrame();
 
   void Clear(Color color);
   void RectFill(float x, float y, float w, float h, Color color);
   void Text(string_view text, float x, float y, Color color, float scale = 1.0f);
-  // Draw a 1-based sprite block. wCells/hCells count sprite cells.
+  // Draw a 1-based sprite block. w_cells / h_cells count sprite cells.
   void Sprite(i32 index, float x, float y,
-              i32 wCells = 1, i32 hCells = 1,
-              bool flipX = false, bool flipY = false,
+              i32 w_cells = 1, i32 h_cells = 1,
+              bool flip_x = false, bool flip_y = false,
               Color tint = TRUE_WHITE);
 
-  // Load sprites.png from disk. Failure keeps the placeholder texture.
+  // Load sprites.png from disk or from memory. Failure keeps the placeholder.
   bool LoadSprites(string_view path);
+  bool LoadSpritesFromMemory(const ui8* data, usize size);
 
   i32   MeasureText(string_view text, float scale = 1.0f) const;
   float ScreenToGameX(float x) const;
@@ -68,10 +68,10 @@ private:
     sg_image image {};
     sg_view  view {};
     sg_sampler sampler {};
-    int  width   = 0;
-    int  height  = 0;
-    int  columns = 0;
-    int  rows    = 0;
+    i32  width   = 0;
+    i32  height  = 0;
+    i32  columns = 0;
+    i32  rows    = 0;
     bool valid   = false;
   };
 
@@ -82,12 +82,12 @@ private:
 
   struct Batch {
     const Texture* texture = nullptr;
-    int first = 0;
-    int count = 0;
+    i32 first = 0;
+    i32 count = 0;
   };
 
   static ui32 PackColor(Color color);
-  static Texture MakeTexture(const unsigned char* pixels, int width, int height);
+  static Texture MakeTexture(const ui8* pixels, i32 width, i32 height);
   static Texture MakeWhiteTexture();
   static Texture MakeFontTexture();
   static Texture MakePlaceholderTexture();
@@ -99,7 +99,12 @@ private:
                 Color color);
   void CreatePipeline();
   void CreateVertexBuffer();
+  // Destroy shader/pipeline/buffer/textures and reset frame state.
+  void DestroyResources();
+  // Takes ownership of `pixels` (stbi memory) and builds the sprite texture.
+  bool SetSprites(ui8* pixels, i32 width, i32 height);
 
+  sg_shader      m_shader {};
   sg_pipeline    m_pipeline {};
   sg_buffer      m_vertexBuffer {};
   sg_pass_action m_passAction {};
@@ -112,13 +117,13 @@ private:
 
   Color  m_clearColor { 15, 15, 23, 255 };
   bool   m_ready       = false;
-  int    m_gameWidth   = 320;
-  int    m_gameHeight  = 180;
-  int    m_spriteSize  = 16;
-  int    m_viewportX   = 0;
-  int    m_viewportY   = 0;
-  int    m_viewportW   = 0;
-  int    m_viewportH   = 0;
+  i32    m_gameWidth   = 320;
+  i32    m_gameHeight  = 180;
+  i32    m_spriteSize  = 16;
+  i32    m_viewportX   = 0;
+  i32    m_viewportY   = 0;
+  i32    m_viewportW   = 0;
+  i32    m_viewportH   = 0;
   float  m_scale       = 1.0f;
 };
 

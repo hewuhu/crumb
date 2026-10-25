@@ -1,20 +1,22 @@
 module;
-#define SOKOL_NO_ENTRY
-#define SOKOL_GLCORE
+#include <string>
+#include <string_view>
+#include <vector>
+
 #include <sokol/sokol_app.h>
 #include <sokol/sokol_log.h>
 #include <stb/stb_image.h>
-export module crumb.window;
-import crumb.type;
-import crumb.logger;
-import crumb.assets;
-import crumb.input;
+export module crumb.platform.window;
+import crumb.core.types;
+import crumb.core.log;
+import crumb.core.assets;
+import crumb.platform.input;
 
 export namespace crumb::win {
 
 // Window title and initial client size.
 struct WindowConfig {
-  string title = "hello crumb";
+  string title = "";
   i32 width = 640;
   i32 height = 360;
 
@@ -22,22 +24,33 @@ struct WindowConfig {
     title.assign(value.data(), value.size());
   }
 
-  void SetSize(i32 w, i32 h) {
-    width = w;
-    height = h;
+  void SetSize(i32 new_width, i32 new_height) {
+    width = new_width;
+    height = new_height;
   }
 };
 
-// Callbacks run by sokol-app; userData is passed through unchanged.
+// Game callbacks run by sokol-app; userData is the Runtime instance.
 struct WindowHooks {
   void* userData = nullptr;
-  void (*init)(void* userData) = nullptr;
-  void (*frame)(void* userData, double dt) = nullptr;
-  void (*cleanup)(void* userData) = nullptr;
+  void (*init)(void* user_data) = nullptr;
+  void (*frame)(void* user_data, double raw_dt) = nullptr;
+  void (*cleanup)(void* user_data) = nullptr;
 };
 
-// Create the window and block until it closes.
-void Run(const WindowConfig& cfg, const WindowHooks& hooks);
+// Everything the window owns. The input state lives here instead of being a
+// module-level global; Runtime holds one WindowContext per process.
+struct WindowContext {
+  input::InputState input;
+  WindowHooks hooks;
+};
+
+// Editor path: build the description, then run sokol-app blocking.
+void Run(WindowContext& context, const WindowConfig& cfg);
+// Template path: hand the description to sokol-app's generated entry point.
+// `context` and `cfg` must stay alive until sokol-app has created the window.
+sapp_desc MakeDesc(WindowContext& context, const WindowConfig& cfg);
+
 // Current framebuffer size in pixels.
 i32  Width();
 i32  Height();
@@ -46,84 +59,107 @@ void Quit();
 
 } // namespace crumb::win
 
-struct Context {
-  crumb::win::WindowHooks hooks;
-};
+namespace {
+
+// The editor build keeps a console attached unless it is a release build.
+// Templates never create one: they are GUI applications.
+#if defined(CRUMB_TEMPLATE)
+constexpr bool SHOW_CONSOLE = false;
+#elif defined(NDEBUG)
+constexpr bool SHOW_CONSOLE = false;
+#else
+constexpr bool SHOW_CONSOLE = true;
+#endif
+
+// Decoded icon bytes. sokol-app reads them while creating the window, after
+// MakeDesc returns; keeping them in the module avoids a pointer to a dead
+// stack buffer without putting image data into WindowContext.
+std::vector<crumb::ui8> g_icon_pixels;
 
 void OnInit(void* user_data) {
-  auto* ctx = static_cast<Context*>(user_data);
-  crumb::input::Reset();
-  if (ctx->hooks.init) ctx->hooks.init(ctx->hooks.userData);
+  auto* context = static_cast<crumb::win::WindowContext*>(user_data);
+  crumb::input::Reset(context->input);
+  if (context->hooks.init)
+    context->hooks.init(context->hooks.userData);
 }
 
 void OnFrame(void* user_data) {
-  auto* ctx = static_cast<Context*>(user_data);
-  if (ctx->hooks.frame) ctx->hooks.frame(ctx->hooks.userData, sapp_frame_duration());
-  crumb::input::EndFrame();
+  auto* context = static_cast<crumb::win::WindowContext*>(user_data);
+  if (context->hooks.frame)
+    context->hooks.frame(context->hooks.userData, sapp_frame_duration());
+  crumb::input::EndFrame(context->input);
 }
 
 void OnCleanup(void* user_data) {
-  auto* ctx = static_cast<Context*>(user_data);
-  if (ctx->hooks.cleanup) ctx->hooks.cleanup(ctx->hooks.userData);
+  auto* context = static_cast<crumb::win::WindowContext*>(user_data);
+  if (context->hooks.cleanup)
+    context->hooks.cleanup(context->hooks.userData);
 }
 
-void OnEvent(const sapp_event* e, void*) {
-  crumb::input::HandleEvent(e);
+void OnEvent(const sapp_event* event, void* user_data) {
+  auto* context = static_cast<crumb::win::WindowContext*>(user_data);
+  crumb::input::HandleEvent(context->input, event);
 }
+
+} // namespace
 
 namespace crumb::win {
 
-void Run(const WindowConfig& cfg, const WindowHooks& hooks) {
-  Context context { hooks };
-
+sapp_desc MakeDesc(WindowContext& context, const WindowConfig& cfg) {
   sapp_desc native {};
-  native.init_userdata_cb    = &OnInit;
-  native.frame_userdata_cb   = &OnFrame;
-  native.cleanup_userdata_cb = &OnCleanup;
-  native.event_userdata_cb   = &OnEvent;
-  native.user_data           = &context;
-  native.width               = cfg.width;
-  native.height              = cfg.height;
-  native.window_title        = cfg.title.c_str();
-  native.high_dpi            = true;
-  native.depth_format        = SAPP_PIXELFORMAT_NONE;
-  native.logger.func         = slog_func;
+  native.init_userdata_cb     = &OnInit;
+  native.frame_userdata_cb    = &OnFrame;
+  native.cleanup_userdata_cb  = &OnCleanup;
+  native.event_userdata_cb    = &OnEvent;
+  native.user_data            = &context;
+  native.width                = cfg.width;
+  native.height               = cfg.height;
+  native.window_title         = cfg.title.c_str();
+  native.high_dpi             = true;
+  native.depth_format         = SAPP_PIXELFORMAT_NONE;
+  native.logger.func          = slog_func;
+  native.win32.console_create = SHOW_CONSOLE;
 
-  // Decode the embedded icon once and hand the RGBA pixels to sokol-app.
-  // The pixels must stay alive until sapp_run() has created the window icons.
-  const assets::Asset iconPng = assets::IconPng();
-  i32 iconWidth    = 0;
-  i32 iconHeight   = 0;
-  i32 iconChannels = 0;
-  uchar* iconPixels = nullptr;
+  // Decode the embedded icon once and keep the pixels alive for the process.
+  const Asset icon_png = IconPng();
+  i32 icon_width    = 0;
+  i32 icon_height   = 0;
+  i32 icon_channels = 0;
 
-  if (!iconPng.Empty()) {
-    iconPixels = stbi_load_from_memory(
-      iconPng.data, to_i32(iconPng.size),
-      &iconWidth, &iconHeight, &iconChannels, 4);
+  g_icon_pixels.clear();
+  if (!icon_png.Empty()) {
+    ui8* pixels = stbi_load_from_memory(
+      icon_png.data, to_i32(icon_png.size),
+      &icon_width, &icon_height, &icon_channels, 4);
+    if (pixels != nullptr) {
+      const usize size = to_usize(icon_width) * to_usize(icon_height) * 4;
+      g_icon_pixels.assign(pixels, pixels + size);
+      stbi_image_free(pixels);
+    }
   }
 
-  if (iconPixels && iconWidth > 0 && iconHeight > 0) {
-    native.icon.images[0].width  = iconWidth;
-    native.icon.images[0].height = iconHeight;
-    native.icon.images[0].pixels.ptr  = iconPixels;
-    native.icon.images[0].pixels.size =
-      to_size_t(iconWidth) * to_size_t(iconHeight) * 4;
+  if (!g_icon_pixels.empty() && icon_width > 0 && icon_height > 0) {
+    native.icon.images[0].width  = icon_width;
+    native.icon.images[0].height = icon_height;
+    native.icon.images[0].pixels.ptr  = g_icon_pixels.data();
+    native.icon.images[0].pixels.size = g_icon_pixels.size();
   } else {
     Logger::Warn("window: failed to decode embedded crumb-ico.png");
   }
 
-  sapp_run(&native);
-
-  if (iconPixels)
-    stbi_image_free(iconPixels);
+  return native;
 }
 
-i32  Width()  { return static_cast<i32>(sapp_width());  }
-i32  Height() { return static_cast<i32>(sapp_height()); }
+void Run(WindowContext& context, const WindowConfig& cfg) {
+  const sapp_desc native = MakeDesc(context, cfg);
+  sapp_run(&native);
+}
+
+i32 Width()  { return to_i32(sapp_width()); }
+i32 Height() { return to_i32(sapp_height()); }
 
 void SetTitle(string_view title) {
-  string copy(title);
+  const string copy(title);
   sapp_set_window_title(copy.c_str());
 }
 
