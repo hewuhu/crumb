@@ -2,7 +2,7 @@ module;
 #include <algorithm>
 #include <cstring>
 #include <string>
-#include <string_view>
+#include <expected>
 #include <utility>
 #include <vector>
 
@@ -14,6 +14,7 @@ export namespace crumb::pak {
 
 using std::vector;
 
+// "CRUMBPAK" image, "CRUMBEND" footer, and their fixed layout sizes.
 inline constexpr char PAK_MAGIC[8]    = { 'C','R','U','M','B','P','A','K' };
 inline constexpr char FOOTER_MAGIC[8] = { 'C','R','U','M','B','E','N','D' };
 inline constexpr ui32 FORMAT_VERSION = 1;
@@ -45,47 +46,49 @@ private:
   vector<Entry> m_entries;
 };
 
+// Standard IEEE CRC-32 (reflected, polynomial 0xEDB88320).
 ui32 Crc32(const ui8* data, usize size);
 
 // Build a pak image. Names are normalized to forward slashes and sorted so the
 // output is reproducible.
 Result<vector<ui8>> Build(vector<SourceFile> files);
 
-// Footer for "template exe + pak" single-file output.
+// Append the footer used by "template exe + pak" single-file output.
 void AppendFooter(vector<ui8>& file, ui32 pak_offset, ui32 pak_size, ui32 pak_crc);
 bool ParseFooter(const vector<ui8>& file, ui32& pak_offset, ui32& pak_size,
                  string* error);
 
-} // namespace crumb::pak
+}
 
 namespace crumb::pak {
 
 namespace {
-
+using namespace crumb;
 void WriteU16(vector<ui8>& out, ui16 value) {
-  out.push_back(static_cast<ui8>(value & 0xFF));
-  out.push_back(static_cast<ui8>((value >> 8) & 0xFF));
+  out.push_back(to_ui8(value & 0xFF));
+  out.push_back(to_ui8((value >> 8) & 0xFF));
 }
 
 void WriteU32(vector<ui8>& out, ui32 value) {
-  out.push_back(static_cast<ui8>(value & 0xFF));
-  out.push_back(static_cast<ui8>((value >> 8) & 0xFF));
-  out.push_back(static_cast<ui8>((value >> 16) & 0xFF));
-  out.push_back(static_cast<ui8>((value >> 24) & 0xFF));
+  out.push_back(to_ui8(value & 0xFF));
+  out.push_back(to_ui8((value >> 8) & 0xFF));
+  out.push_back(to_ui8((value >> 16) & 0xFF));
+  out.push_back(to_ui8((value >> 24) & 0xFF));
 }
 
 ui16 ReadU16(const vector<ui8>& in, usize offset) {
-  return static_cast<ui16>(in[offset]) |
-         static_cast<ui16>(in[offset + 1] << 8);
+  return to_ui16(in[offset]) |
+         to_ui16(in[offset + 1] << 8);
 }
 
 ui32 ReadU32(const vector<ui8>& in, usize offset) {
-  return static_cast<ui32>(in[offset]) |
-         (static_cast<ui32>(in[offset + 1]) << 8) |
-         (static_cast<ui32>(in[offset + 2]) << 16) |
-         (static_cast<ui32>(in[offset + 3]) << 24);
+  return to_ui32(in[offset]) |
+         (to_ui32(in[offset + 1]) << 8) |
+         (to_ui32(in[offset + 2]) << 16) |
+         (to_ui32(in[offset + 3]) << 24);
 }
 
+// Pak names always use forward slashes and have no leading separator.
 string NormalizeName(string_view name) {
   string result;
   result.reserve(name.size());
@@ -100,6 +103,7 @@ string NormalizeName(string_view name) {
   return result;
 }
 
+// Entry names must fit the 16-bit length field and stay relative.
 bool ValidName(string_view name) {
   if (name.empty() || name.size() > 0xFFFF)
     return false;
@@ -108,7 +112,7 @@ bool ValidName(string_view name) {
   return name.find("..") == string_view::npos;
 }
 
-} // namespace
+}
 
 ui32 Crc32(const ui8* data, usize size) {
   ui32 crc = 0xFFFFFFFFu;
@@ -122,6 +126,7 @@ ui32 Crc32(const ui8* data, usize size) {
   return ~crc;
 }
 
+// Parse the header and entry table; every payload range is bound-checked.
 bool Archive::Parse(vector<ui8> bytes, string* error) {
   if (bytes.size() < HEADER_SIZE) {
     if (error) *error = "pak is too small";
@@ -175,6 +180,7 @@ bool Archive::Parse(vector<ui8> bytes, string* error) {
   return true;
 }
 
+// Names are normalized before comparison; lookups are linear.
 bool Archive::Contains(string_view name) const {
   const string normalized = NormalizeName(name);
   for (const Entry& entry : m_entries)
@@ -183,6 +189,7 @@ bool Archive::Contains(string_view name) const {
   return false;
 }
 
+// Copy one entry after verifying its per-entry CRC.
 bool Archive::Read(string_view name, vector<ui8>& out, string* error) const {
   const string normalized = NormalizeName(name);
   for (const Entry& entry : m_entries) {
@@ -200,6 +207,7 @@ bool Archive::Read(string_view name, vector<ui8>& out, string* error) const {
   return false;
 }
 
+// Normalize/sort entries, write the table, then concatenate the payloads.
 Result<vector<ui8>> Build(vector<SourceFile> files) {
   for (SourceFile& file : files) {
     file.name = NormalizeName(file.name);
@@ -230,16 +238,16 @@ Result<vector<ui8>> Build(vector<SourceFile> files) {
   image.reserve(payload_offset + 1024);
   image.insert(image.end(), PAK_MAGIC, PAK_MAGIC + sizeof(PAK_MAGIC));
   WriteU32(image, FORMAT_VERSION);
-  WriteU32(image, static_cast<ui32>(files.size()));
+  WriteU32(image, to_ui32(files.size()));
 
-  ui32 offset = static_cast<ui32>(payload_offset);
+  ui32 offset = to_ui32(payload_offset);
   for (const SourceFile& file : files) {
-    WriteU16(image, static_cast<ui16>(file.name.size()));
+    WriteU16(image, to_ui16(file.name.size()));
     image.insert(image.end(), file.name.begin(), file.name.end());
     WriteU32(image, offset);
-    WriteU32(image, static_cast<ui32>(file.bytes.size()));
+    WriteU32(image, to_ui32(file.bytes.size()));
     WriteU32(image, Crc32(file.bytes.data(), file.bytes.size()));
-    offset += static_cast<ui32>(file.bytes.size());
+    offset += to_ui32(file.bytes.size());
   }
 
   for (const SourceFile& file : files)
@@ -248,6 +256,7 @@ Result<vector<ui8>> Build(vector<SourceFile> files) {
   return image;
 }
 
+// Layout: magic, offset, size, CRC, then a reserved zero word.
 void AppendFooter(vector<ui8>& file, ui32 pak_offset, ui32 pak_size, ui32 pak_crc) {
   file.insert(file.end(), FOOTER_MAGIC, FOOTER_MAGIC + sizeof(FOOTER_MAGIC));
   WriteU32(file, pak_offset);
@@ -256,6 +265,8 @@ void AppendFooter(vector<ui8>& file, ui32 pak_offset, ui32 pak_size, ui32 pak_cr
   WriteU32(file, 0);
 }
 
+// Read offset/size from the trailing footer and validate the payload range.
+// The stored CRC is not verified here.
 bool ParseFooter(const vector<ui8>& file, ui32& pak_offset, ui32& pak_size,
                  string* error) {
   if (file.size() < FOOTER_SIZE) {
@@ -276,4 +287,4 @@ bool ParseFooter(const vector<ui8>& file, ui32& pak_offset, ui32& pak_size,
   return true;
 }
 
-} // namespace crumb::pak
+}

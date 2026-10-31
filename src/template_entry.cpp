@@ -1,5 +1,8 @@
 #include <sokol/sokol_app.h>
 
+// Exported-template entry point. sokol-app supplies main/WinMain and owns the
+// event loop; this file only describes the window and runtime.
+
 import crumb.app.runtime;
 import crumb.core.types;
 import crumb.core.error;
@@ -10,6 +13,9 @@ import crumb.platform.window;
 
 namespace {
 using namespace crumb;
+
+// Prefer --project; otherwise let ResolveProject inspect the executable itself
+// (appended footer, sibling .pak, or the executable directory in dev builds).
 ProjectConfig MakeConfig() {
   const platform::LaunchOptions options =
     platform::MakeLaunchOptions();
@@ -30,10 +36,10 @@ ProjectConfig MakeConfig() {
   return *resolved;
 }
 
-} // namespace
+}
 
-// sokol-app's generated WinMain/main calls this. Returning the description
-// hands the event loop to sokol-app, so the runtime lives in function statics.
+// The returned description and every pointer it holds must outlive the call,
+// hence the function-static config, runtime, and window.
 sapp_desc sokol_main(int, char**) {
   static ProjectConfig config = MakeConfig();
   static Runtime runtime(config);

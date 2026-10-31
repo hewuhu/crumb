@@ -9,7 +9,8 @@ import crumb.gfx.color;
 
 export namespace crumb {
 
-// Immediate-mode 2D renderer. Font and icon are embedded; sprites load at runtime.
+// Immediate-mode 2D renderer. One dynamic vertex buffer is filled per frame and
+// flushed as one draw call per texture change.
 class Renderer {
 public:
   Renderer() = default;
@@ -20,9 +21,10 @@ public:
   Renderer(Renderer&&) = delete;
   Renderer& operator=(Renderer&&) = delete;
 
-  // Create GPU resources for a logical game resolution.
+  // Create the GPU resources for a logical game resolution.
   bool Init(i32 width, i32 height, i32 sprite_size);
-  // Release all sokol resources.
+
+  // Release every sokol resource; safe to call more than once.
   void Shutdown();
 
   bool Ready() const { return m_ready; }
@@ -33,21 +35,25 @@ public:
 
   void SetClearColor(Color color) { m_clearColor = color; }
 
-  // Start a frame and compute the letterboxed viewport.
+  // Start a frame and fit the game resolution into the window (letterboxed).
   void BeginFrame(i32 window_width, i32 window_height);
-  // Upload vertices, draw batches, and present.
+
+  // Upload the queued vertices, draw the batches, and present.
   void EndFrame();
 
+  // Queue a full-screen color quad. This is separate from the sokol pass clear.
   void Clear(Color color);
   void RectFill(float x, float y, float w, float h, Color color);
+  // Draw ASCII text; each byte advances one 16x16 cell.
   void Text(string_view text, float x, float y, Color color, float scale = 1.0f);
-  // Draw a 1-based sprite block. w_cells / h_cells count sprite cells.
+
+  // Draw a 1-based sprite block. w_cells/h_cells follow PICO-8 spr(w,h).
   void Sprite(i32 index, float x, float y,
               i32 w_cells = 1, i32 h_cells = 1,
               bool flip_x = false, bool flip_y = false,
               Color tint = TRUE_WHITE);
 
-  // Load sprites.png from disk or from memory. Failure keeps the placeholder.
+  // Replace the placeholder sheet; failure leaves the previous texture intact.
   bool LoadSprites(string_view path);
   bool LoadSpritesFromMemory(const ui8* data, usize size);
 
@@ -56,12 +62,12 @@ public:
   float ScreenToGameY(float y) const;
 
 private:
-  // The bundled font_16x16.png is a 10x10 atlas of 16x16 pixel glyph cells.
-  // ASCII 32..126 starts at the top-left cell; the remaining cells are unused.
+  // Embedded 10x10 atlas of 16x16 cells; printable ASCII starts at cell 0.
   static constexpr int FONT_CELL_WIDTH  = 16;
   static constexpr int FONT_CELL_HEIGHT = 16;
   static constexpr int FONT_COLUMNS     = 10;
   static constexpr int FONT_ROWS        = 10;
+  // Per-frame vertex cap; PushQuad drops primitives once it is reached.
   static constexpr int MAX_VERTICES     = 65536;
 
   struct Texture {
@@ -99,8 +105,10 @@ private:
                 Color color);
   void CreatePipeline();
   void CreateVertexBuffer();
+
   // Destroy shader/pipeline/buffer/textures and reset frame state.
   void DestroyResources();
+
   // Takes ownership of `pixels` (stbi memory) and builds the sprite texture.
   bool SetSprites(ui8* pixels, i32 width, i32 height);
 
@@ -115,6 +123,7 @@ private:
   std::vector<Batch>  m_batches;
   const Texture* m_currentTexture = nullptr;
 
+  // BeginFrame paints the game area with this color; letterbox bars stay black.
   Color  m_clearColor { 15, 15, 23, 255 };
   bool   m_ready       = false;
   i32    m_gameWidth   = 320;
@@ -127,4 +136,4 @@ private:
   float  m_scale       = 1.0f;
 };
 
-} // namespace crumb
+}

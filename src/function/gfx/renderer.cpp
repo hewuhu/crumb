@@ -18,6 +18,7 @@ import crumb.core.assets;
 
 namespace crumb {
 
+// Pack into the byte order expected by SG_VERTEXFORMAT_UBYTE4N: R, G, B, A.
 ui32 Renderer::PackColor(Color color) {
   return to_ui32(color.r)
        | (to_ui32(color.g) << 8)
@@ -25,6 +26,7 @@ ui32 Renderer::PackColor(Color color) {
        | (to_ui32(color.a) << 24);
 }
 
+// Create an immutable RGBA8 texture, view, and nearest-neighbor sampler.
 Renderer::Texture Renderer::MakeTexture(const ui8* pixels, i32 width, i32 height) {
   Texture texture;
   texture.width  = width;
@@ -63,6 +65,7 @@ Renderer::Texture Renderer::MakeWhiteTexture() {
   return MakeTexture(pixel, 1, 1);
 }
 
+// Decode the embedded atlas and derive its glyph grid.
 Renderer::Texture Renderer::MakeFontTexture() {
   i32 width    = 0;
   i32 height   = 0;
@@ -98,6 +101,7 @@ Renderer::Texture Renderer::MakeFontTexture() {
   return texture;
 }
 
+// Checkerboard fallback used until a sprite sheet loads.
 Renderer::Texture Renderer::MakePlaceholderTexture() {
   ui8 pixels[16 * 16 * 4] {};
   for (i32 y = 0; y < 16; ++y) {
@@ -128,7 +132,7 @@ void Renderer::DestroyTexture(Texture& texture) {
   texture = {};
 }
 
-// Replace the placeholder with a project sprite sheet.
+// Validate the sheet, replace the previous texture, and free the stbi pixels.
 bool Renderer::SetSprites(ui8* pixels, i32 width, i32 height) {
   if (pixels == nullptr)
     return false;
@@ -173,6 +177,7 @@ bool Renderer::SetSprites(ui8* pixels, i32 width, i32 height) {
   return true;
 }
 
+// Load a sheet from disk; the runtime normally uses LoadSpritesFromMemory.
 bool Renderer::LoadSprites(string_view path) {
   if (!m_ready || m_spriteSize <= 0 || path.empty())
     return false;
@@ -208,8 +213,8 @@ bool Renderer::LoadSpritesFromMemory(const ui8* data, usize size) {
   return SetSprites(pixels, width, height);
 }
 
-// ---------- 内部批处理 ----------
-
+// Append two triangles. A texture change starts a new batch; a full buffer
+// drops the quad.
 void Renderer::PushQuad(
   const Texture& texture,
   float x, float y, float w, float h,
@@ -238,8 +243,7 @@ void Renderer::PushQuad(
   m_batches.back().count += 6;
 }
 
-// ---------- 资源创建 ----------
-
+// Shader maps game pixels to clip space and flips Y for a top-left origin.
 void Renderer::CreatePipeline() {
   const string vertex_source =
     "#version 410 core\n"
@@ -317,6 +321,7 @@ void main() {
   m_pipeline = sg_make_pipeline(&pipeline_desc);
 }
 
+// One transient buffer holds all vertices for the current frame.
 void Renderer::CreateVertexBuffer() {
   sg_buffer_desc buffer_desc {};
   buffer_desc.size = to_usize(MAX_VERTICES) * sizeof(Vertex);
@@ -325,8 +330,7 @@ void Renderer::CreateVertexBuffer() {
   m_vertexBuffer = sg_make_buffer(&buffer_desc);
 }
 
-// ---------- 生命周期 ----------
-
+// Destroy GPU objects and reset CPU-side batch state.
 void Renderer::DestroyResources() {
   if (sg_isvalid()) {
     DestroyTexture(m_white);
@@ -354,11 +358,11 @@ void Renderer::DestroyResources() {
   m_scale = 1.0f;
 }
 
+// (Re)create every GPU resource. Any failure shuts sokol down again.
 bool Renderer::Init(i32 width, i32 height, i32 sprite_size) {
   if (m_ready)
     return true;
 
-  // A previous Init may have failed after sg_setup; leave no partial state.
   DestroyResources();
   if (sg_isvalid())
     sg_shutdown();
@@ -408,6 +412,7 @@ bool Renderer::Init(i32 width, i32 height, i32 sprite_size) {
   return true;
 }
 
+// Idempotent shutdown, also called by the destructor.
 void Renderer::Shutdown() {
   DestroyResources();
   if (sg_isvalid())
@@ -415,9 +420,7 @@ void Renderer::Shutdown() {
   m_ready = false;
 }
 
-// ---------- 帧控制 ----------
-
-// Fit the game resolution into the window with letterboxing.
+// Reset the batch, compute the letterboxed viewport, and paint the background.
 void Renderer::BeginFrame(i32 window_width, i32 window_height) {
   if (!m_ready)
     return;
@@ -444,7 +447,7 @@ void Renderer::BeginFrame(i32 window_width, i32 window_height) {
            0.0f, 0.0f, 1.0f, 1.0f, m_clearColor);
 }
 
-// Upload the queued vertices and draw all batches.
+// Upload the vertex data once, then draw each texture batch in order.
 void Renderer::EndFrame() {
   if (!m_ready)
     return;
@@ -483,8 +486,7 @@ void Renderer::EndFrame() {
   sg_commit();
 }
 
-// ---------- 绘制 ----------
-
+// The pass still clears to black; this quad covers the game area with `color`.
 void Renderer::Clear(Color color) {
   PushQuad(m_white, 0.0f, 0.0f,
            to_float(m_gameWidth),
@@ -496,6 +498,7 @@ void Renderer::RectFill(float x, float y, float w, float h, Color color) {
   PushQuad(m_white, x, y, w, h, 0.0f, 0.0f, 1.0f, 1.0f, color);
 }
 
+// ASCII-only: bytes outside 32..126 advance the cursor but draw no glyph.
 void Renderer::Text(string_view text, float x, float y, Color color, float scale) {
   if (!m_font.valid)
     return;
@@ -539,7 +542,7 @@ void Renderer::Text(string_view text, float x, float y, Color color, float scale
   }
 }
 
-// Draw a 1-based sprite block; w_cells / h_cells follow PICO-8 spr(w,h).
+// Cells are drawn row-major; flips mirror the whole block, not each cell.
 void Renderer::Sprite(i32 index, float x, float y,
                       i32 w_cells, i32 h_cells,
                       bool flip_x, bool flip_y, Color tint) {
@@ -568,7 +571,7 @@ void Renderer::Sprite(i32 index, float x, float y,
 
   for (i32 dy = 0; dy < h_cells; ++dy) {
     for (i32 dx = 0; dx < w_cells; ++dx) {
-      // Mirror the whole block, not just each cell in place.
+
       const i32 src_dx = flip_x ? (w_cells - 1 - dx) : dx;
       const i32 src_dy = flip_y ? (h_cells - 1 - dy) : dy;
       const i32 cell = base + src_dy * columns + src_dx;
@@ -607,8 +610,7 @@ void Renderer::Sprite(i32 index, float x, float y,
   }
 }
 
-// ---------- 查询 ----------
-
+// Width in game pixels; multiline text returns the widest line.
 i32 Renderer::MeasureText(string_view text, float scale) const {
   i32 line_width = 0;
   i32 max_width  = 0;
@@ -627,6 +629,7 @@ i32 Renderer::MeasureText(string_view text, float scale) const {
   return to_i32(to_float(std::max(max_width, line_width)) * text_scale);
 }
 
+// Convert framebuffer coordinates back into game coordinates.
 float Renderer::ScreenToGameX(float x) const {
   return (x - to_float(m_viewportX))
        / to_float(m_scale);
@@ -637,4 +640,4 @@ float Renderer::ScreenToGameY(float y) const {
        / to_float(m_scale);
 }
 
-} // namespace crumb
+}

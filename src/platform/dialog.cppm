@@ -15,15 +15,16 @@ import crumb.core.types;
 
 export namespace crumb::platform {
 
-// Last-resort error reporting for GUI builds, where stderr is not visible.
+// Last-resort error reporting for GUI builds where stderr is not visible.
 void ShowError(string_view title, string_view message);
 
-} // namespace crumb::platform
+}
 
 #ifdef _WIN32
 
 namespace {
 
+// Convert UTF-8 to UTF-16 for the Win32 wide-character API.
 std::wstring ToWide(crumb::string_view text) {
   if (text.empty())
     return {};
@@ -38,7 +39,7 @@ std::wstring ToWide(crumb::string_view text) {
   return result;
 }
 
-} // namespace
+}
 
 namespace crumb::platform {
 
@@ -49,7 +50,7 @@ void ShowError(string_view title, string_view message) {
                 MB_OK | MB_ICONERROR);
 }
 
-} // namespace crumb::platform
+}
 
 #else
 
@@ -61,6 +62,6 @@ void ShowError(string_view title, string_view message) {
                crumb::to_i32(message.size()), message.data());
 }
 
-} // namespace crumb::platform
+}
 
 #endif

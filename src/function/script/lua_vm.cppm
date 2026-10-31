@@ -13,12 +13,13 @@ import crumb.core.log;
 
 export namespace crumb {
 
-// Small Lua 5.5 wrapper. One instance owns one lua_State.
+// Minimal Lua 5.5 wrapper: one lua_State, automatic stack cleanup, and errors
+// reported through strings instead of exceptions.
 class LuaVM {
 private:
   lua_State* m_state { nullptr };
 
-  // Restores the stack top when it goes out of scope.
+  // Restores the Lua stack top when a C++ scope exits, including early returns.
   class StackGuard {
   public:
     explicit StackGuard(lua_State* lua_state)
@@ -34,6 +35,7 @@ private:
     int m_base;
   };
 
+  // Lua panic handler; logs and lets the process unwind through lua_close().
   static int Panic(lua_State* lua_state) {
     c_string message = lua_tostring(lua_state, -1);
     Logger::Error("lua panic: {}", message ? message : "(no message)");
@@ -41,6 +43,7 @@ private:
     return 0;
   }
 
+  // luaL_requiref trampoline used by Init() so each open call is protected.
   static int LoadLib(lua_State* lua_state) {
     c_string name = lua_tostring(lua_state, 1);
     auto fn = reinterpret_cast<lua_CFunction>(lua_touserdata(lua_state, 2));
@@ -49,6 +52,7 @@ private:
     return 0;
   }
 
+  // Message handler installed before every protected call.
   static int Traceback(lua_State* lua_state) {
     c_string message = lua_tostring(lua_state, 1);
     if (message) luaL_traceback(lua_state, lua_state, message, 1);
@@ -56,6 +60,7 @@ private:
     return 1;
   }
 
+  // Copy the error at the top of the stack; log it when no error sink was passed.
   void SetError(string* error) {
     c_string message = lua_tostring(m_state, -1);
     if (error) *error = message ? message : "(unknown error)";
@@ -77,7 +82,8 @@ public:
     }
   }
 
-  // Create the state and open the Lua libraries used by games.
+  // Open only the libraries games need: base, string, table, math, coroutine,
+  // utf8. io, os, package, and debug stay closed.
   bool Init() {
     if (m_state) return true;
 
@@ -116,7 +122,7 @@ public:
     return true;
   }
 
-  // Execute a string chunk.
+  // Execute a string chunk. `chunk` is only a source name for error messages.
   bool DoString(string_view code, string_view chunk = "=(crumb)",
                 string* error = nullptr) {
     StackGuard guard(m_state);
@@ -135,7 +141,7 @@ public:
     return true;
   }
 
-  // Load and execute a .lua file (UTF-8 BOM is ignored).
+  // Read and execute a file; a UTF-8 BOM is ignored.
   bool DoFile(string_view path, string* error = nullptr) {
     std::ifstream file{ string(path), std::ios::binary };
 
@@ -149,7 +155,6 @@ public:
       std::istreambuf_iterator<char>()
     };
 
-    // Accept UTF-8 BOM files created by Windows editors.
     if (src.size() >= 3 &&
         to_ui8(src[0]) == 0xEF &&
         to_ui8(src[1]) == 0xBB &&
@@ -160,7 +165,7 @@ public:
     return DoString(src, "@" + string(path), error);
   }
 
-  // Call a global function with numeric arguments.
+  // Call a global function with numeric arguments and discard all results.
   bool Call(string_view name, std::initializer_list<double> args = {},
             string* error = nullptr) {
     StackGuard guard(m_state);
@@ -186,7 +191,7 @@ public:
     return true;
   }
 
-  // True when a global function with this name exists.
+  // Check for a callable global without leaving anything on the stack.
   bool HasFunction(string_view name) {
     if (!m_state) return false;
 
@@ -196,7 +201,7 @@ public:
     return lua_isfunction(m_state, -1);
   }
 
-  // Bind a C function as a Lua global.
+  // Expose a C function as a Lua global.
   void Register(string_view name, lua_CFunction fn) {
     const string function_name(name);
     lua_pushcfunction(m_state, fn);
@@ -206,4 +211,4 @@ public:
   inline lua_State* GetState() noexcept { return m_state; }
 };
 
-} // namespace crumb
+}

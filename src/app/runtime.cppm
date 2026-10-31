@@ -11,25 +11,30 @@ import crumb.script.lua;
 
 export namespace crumb {
 
+// Project settings resolved from the path passed to the CLI and from crumb.cfg.
 struct ProjectConfig {
-  // Window title, normally the project name.
   string title = "crumb";
-  // Logical names inside the VFS ("main.lua" / "sprites.png").
+
+  // Logical names inside the mounted VFS.
   string mainScript = "main.lua";
   string spritesPath = "sprites.png";
-  // Disk directory, .pak file, or executable with a pak footer.
+
+  // Mount source: a directory, an archive, or a self-contained executable.
   vfs::SourceKind sourceKind = vfs::SourceKind::DISK;
   string sourcePath;
-  // Logical game resolution and sprite grid.
+
+  // Logical game resolution, sprite cell size, and integer window scale.
   i32 width = 320;
   i32 height = 180;
   i32 spriteSize = 16;
   i32 windowScale = 2;
-  // Fixed-step settings for _fixed_update.
+
+  // Fixed-step settings passed to Time.
   i32 fixedFps = 60;
   i32 maxFixedSteps = 5;
 };
 
+// Owns the window, renderer, Lua VM, clock, and VFS for one project.
 class Runtime {
 public:
   explicit Runtime(ProjectConfig config);
@@ -40,32 +45,35 @@ public:
   Runtime(Runtime&&) = delete;
   Runtime& operator=(Runtime&&) = delete;
 
-  // Fills the window hooks. Call before RunBlocking() or MakeDesc().
+  // Install the sokol-app hooks; call before RunBlocking() or MakeDesc().
   void Prepare();
 
   // Editor path: create the window and block until the game quits.
   int RunBlocking();
 
-  // Template path: sokol_main() returns these to sokol-app instead of blocking.
+  // Template path: sokol-app creates the window from these.
   win::WindowContext& Window();
   win::WindowConfig MakeWindowConfig() const;
 
 private:
-  // Sokol-app callbacks; user_data is the Runtime instance.
   static void OnInit(void* user_data);
   static void OnFrame(void* user_data, double raw_dt);
   static void OnCleanup(void* user_data);
 
   // Called once after the window exists.
   void Start();
+
   // One frame: fixed updates, _update, then _draw.
   void Frame(double raw_dt);
-  // Optional _cleanup plus renderer shutdown.
+
+  // Optional _cleanup plus renderer/VFS shutdown.
   void Cleanup();
-  // Print an error and ask the window to close.
+
+  // Log an error, show a dialog in GUI builds, and request window shutdown.
   void Fail(string_view message);
 
-  // Owned runtime objects. Lua closes before the renderer on destruction.
+  // Declaration order matters: members are destroyed in reverse, so Lua closes
+  // before the renderer.
   ProjectConfig m_config;
   Renderer m_renderer;
   LuaVM m_lua;
@@ -81,11 +89,10 @@ private:
   bool m_hasCleanup = false;
 };
 
-// Resolves a project directory or a main.lua path, reads crumb.cfg, and fills
-// the config. Shared by the editor CLI and the exported template.
+// Resolve a directory, .lua, .pak, or executable and load its crumb.cfg.
 Result<ProjectConfig> ResolveProject(string_view path);
 
 // Editor helper: resolve `path` and run it blocking until the window closes.
 int RunProject(string_view path);
 
-} // namespace crumb
+}

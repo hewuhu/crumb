@@ -1,7 +1,7 @@
-// Single implementation unit for sokol and stb_image.
-// SOKOL_GLCORE comes from xmake.lua; SOKOL_NO_ENTRY is defined only for the
-// editor target, so sokol-app either provides sapp_run() (editor) or its own
-// WinMain/main entry (template).
+// Single implementation unit for sokol and stb_image. SOKOL_NO_ENTRY is defined
+// only for the editor target, so sokol-app either provides sapp_run() (editor)
+// or its own WinMain/main (template).
+
 #define SOKOL_APP_IMPL
 #define SOKOL_GFX_IMPL
 #define SOKOL_COLOR_IMPL

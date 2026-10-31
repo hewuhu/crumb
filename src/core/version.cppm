@@ -8,8 +8,9 @@ import crumb.core.error;
 
 export namespace crumb {
 
-// Runtime / project version. Patch layout: 7 bits major, 10 bits minor, 12 bits
-// patch, packed into one ui32 so it can live in a file header.
+// Semantic version with a compact 29-bit packing: 7-bit major in bits 22..28,
+// 10-bit minor in bits 12..21, 12-bit patch in bits 0..11. Bits 29..31 are
+// unused.
 struct Version {
   ui32 major = 0;
   ui32 minor = 0;
@@ -17,7 +18,7 @@ struct Version {
 
   constexpr auto operator<=>(const Version&) const = default;
 
-  // True when this version is the same major and at least `required`.
+  // Same major version and at least the required minor/patch.
   constexpr bool CompatibleWith(const Version& required) const {
     return major == required.major && *this >= required;
   }
@@ -36,10 +37,11 @@ struct Version {
   }
 
   string ToStr() const {
-    return std::format("{}.{}.{}", major, minor, patch);
+    return std::format("v{}.{}.{}", major, minor, patch);
   }
 };
 
+// Bumped when on-disk or script-facing behavior changes.
 inline constexpr Version ENGINE_VERSION { 0, 0, 2 };
 
-} // namespace crumb
+}

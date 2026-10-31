@@ -9,10 +9,11 @@ import crumb.core.types;
 
 export namespace crumb::input {
 
+// SAPP_MAX_KEYCODES is 512; sokol only reports codes below it.
 inline constexpr int MAX_KEYS    = 512;
 inline constexpr int MOUSE_COUNT = 3;
 
-// Device state owned by the window (WindowContext), never a free global.
+// Input owned by WindowContext, not a module-level global.
 struct InputState {
   bool  keyDown[MAX_KEYS] {};
   bool  keyPressed[MAX_KEYS] {};
@@ -24,32 +25,35 @@ struct InputState {
   float mouseY = 0.0f;
 };
 
-// Map a friendly key name ("left", "a", "space") to a sokol key code.
+// Map a friendly name ("a", "0", "left") to a sokol key code; -1 if unknown.
 int   KeyCode(string_view name);
+
 // Held, pressed this frame, released this frame.
 bool  KeyHeld(const InputState& state, int key);
 bool  KeyPressed(const InputState& state, int key);
 bool  KeyReleased(const InputState& state, int key);
 
-// Mouse position is in framebuffer pixels.
+// Mouse position in framebuffer pixels.
 float MouseX(const InputState& state);
 float MouseY(const InputState& state);
 bool  MouseDown(const InputState& state, int button);
 bool  MousePressed(const InputState& state, int button);
 bool  MouseReleased(const InputState& state, int button);
 
-// Reset all input state (window focus loss / startup).
+// Clear all input state (used on startup).
 void Reset(InputState& state);
-// Clear per-frame pressed/released flags.
+
+// Clear per-frame pressed/released flags after the frame callback.
 void EndFrame(InputState& state);
 void HandleEvent(InputState& state, const sapp_event* event);
 
-} // namespace crumb::input
+}
 
 namespace crumb::input {
 
 namespace {
 
+// Clear per-frame edges but keep held state and mouse position.
 void ClearTransient(InputState& state) {
   std::memset(state.keyPressed,    0, sizeof(state.keyPressed));
   std::memset(state.keyReleased,   0, sizeof(state.keyReleased));
@@ -57,12 +61,15 @@ void ClearTransient(InputState& state) {
   std::memset(state.mouseReleased, 0, sizeof(state.mouseReleased));
 }
 
+// Drop all held state and edges; mouse position is reset to zero as well.
 void ClearAll(InputState& state) {
   std::memset(&state, 0, sizeof(state));
 }
 
-} // namespace
+}
 
+// Single lowercase letters/digits and a small named-key table. Uppercase names
+// are not accepted.
 int KeyCode(string_view name) {
   if (name.size() == 1) {
     const char character = name[0];
@@ -124,6 +131,7 @@ bool MouseReleased(const InputState& state, int button) {
 void Reset(InputState& state)    { ClearAll(state); }
 void EndFrame(InputState& state) { ClearTransient(state); }
 
+// Translate sokol events into cumulative held state plus per-frame edges.
 void HandleEvent(InputState& state, const sapp_event* event) {
   switch (event->type) {
     case SAPP_EVENTTYPE_KEY_DOWN:
@@ -169,4 +177,4 @@ void HandleEvent(InputState& state, const sapp_event* event) {
   }
 }
 
-} // namespace crumb::input
+}

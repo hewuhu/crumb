@@ -9,10 +9,8 @@ export module crumb.core.log;
 
 export namespace crumb {
 
-// Thin wrapper over modlog. Two things it fixes:
-//   1. the level check happens BEFORE std::format, so disabled logs cost one compare;
-//   2. one place to flip the global level / stream / prefix.
-// Not thread-safe; modlog itself is not synchronized either.
+// Format-based facade over modlog. The level is checked before std::format, so
+// disabled messages cost only a comparison. Not thread-safe.
 class Logger {
 public:
   Logger() = delete;
@@ -38,6 +36,7 @@ public:
       modlog::modlog_default.os->flush();
   }
 
+  // Release builds drop Debug and below regardless of the configured level.
   static bool Enabled(modlog::LogLevel level) {
     const auto minimum = modlog::modlog_default.minlog;
     if (minimum == modlog::LogLevel::Disabled)
@@ -105,10 +104,9 @@ private:
   static void Emit(modlog::LogLevel level, std::format_string<Args...> fmt, Args&&... args) {
     if (!Enabled(level))
       return;
-    // MSVC modules: the free operator<<(std::ostream&, std::string) declared by
-    // <string> lives in the global module fragment and is not visible when this
-    // template is instantiated in another module unit. Passing a C string uses
-    // the basic_ostream member overload, which is always visible.
+
+    // MSVC modules: operator<<(std::ostream&, std::string) from the global
+    // module fragment is not visible here, so emit a C string instead.
     const std::string text = std::format(fmt, std::forward<Args>(args)...);
     modlog::Log(level) << text.c_str();
   }
@@ -123,4 +121,4 @@ private:
   }
 };
 
-} // namespace crumb
+}

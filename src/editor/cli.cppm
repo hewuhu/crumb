@@ -2,7 +2,6 @@ module;
 #include <expected>
 #include <filesystem>
 #include <fstream>
-#include <string>
 #include <string_view>
 #include <system_error>
 #include <utility>
@@ -21,10 +20,12 @@ import crumb.editor.exporter;
 
 export namespace crumb {
 
+// Parsed command line. The string_views point into argv and live as long as main.
 struct Cmd {
   string_view name;
   std::vector<string_view> args;
 
+  // argc must be at least 2; CliRun checks this before calling.
   static Cmd Parse(int argc, char** argv) {
     Cmd command;
     command.name = argv[1];
@@ -35,6 +36,7 @@ struct Cmd {
   }
 };
 
+// Write a whole file; the caller sees open/write failures as Error values.
 VoidResult WriteFile(const std::filesystem::path& path, string_view content) {
   std::ofstream file(path, std::ios::out | std::ios::binary);
   if (!file) {
@@ -51,6 +53,7 @@ VoidResult WriteFile(const std::filesystem::path& path, string_view content) {
   return {};
 }
 
+// LuaLS workspace settings written by `create` and `lsp`.
 constexpr string_view LUARC_JSON = R"JSON({
   "$schema": "https://raw.githubusercontent.com/LuaLS/vscode-lua/master/setting/schema.json",
   "runtime.version": "Lua 5.5",
@@ -68,7 +71,7 @@ constexpr string_view LUARC_JSON = R"JSON({
   "diagnostics.disable": ["lowercase-global"]
 })JSON";
 
-// Write .luarc.json and meta/crumb.lua for LuaLS.
+// Write .luarc.json and meta/crumb.lua for LuaLS completion and diagnostics.
 VoidResult WriteLspFiles(const std::filesystem::path& project_dir) {
   namespace fs = std::filesystem;
 
@@ -78,7 +81,9 @@ VoidResult WriteLspFiles(const std::filesystem::path& project_dir) {
   if (err) {
     return std::unexpected<Error> {
       MakeError(ErrorCode::ERROR_IO,
-                "cannot create '" + meta_dir.string() + "': " + err.message()) };
+      "cannot create '" + meta_dir.string() + "': " + err.message())
+    };
+
   }
 
   const Asset stub = LspStub();
@@ -134,7 +139,7 @@ VoidResult InstallLsp(string_view path) {
   return WriteLspFiles(project_dir);
 }
 
-// Scaffold a new game project in the current directory.
+// Scaffold main.lua, crumb.cfg, and LSP metadata in a new or empty directory.
 VoidResult CreateProject(string_view name) {
   namespace fs = std::filesystem;
 
@@ -146,7 +151,12 @@ VoidResult CreateProject(string_view name) {
                 "cannot get current directory: " + err.message()) };
   }
 
-  const fs::path project_dir = cwd / fs::path(string(name));
+  const fs::path requested{ string(name) };
+  const fs::path project_dir =
+    requested.is_absolute() ? requested : cwd / requested;
+  string project_name = project_dir.filename().string();
+  if (project_name.empty() || project_name == "." || project_name == "..")
+    project_name = "NewGame";
 
   if (fs::exists(project_dir, err)) {
     if (!fs::is_directory(project_dir, err)) {
@@ -165,10 +175,13 @@ VoidResult CreateProject(string_view name) {
   if (err) {
     return std::unexpected<Error> {
       MakeError(ErrorCode::ERROR_IO,
-                "cannot create '" + project_dir.string() + "': " + err.message()) };
+                "cannot create '" + project_dir.string() + "': " + err.message() +
+                " (current directory: " + cwd.string() +
+                "; choose a writable directory or pass an absolute path)") };
   }
 
-  const string name_text(name);
+  // Starter project: one draw callback and the minimum update hooks.
+  const string name_text = project_name;
   const string main_lua = R"LUA(function _init()
   print("hello crumb")
 end
@@ -182,6 +195,7 @@ function _draw(dt)
 end
 )LUA";
 
+  // Keys and defaults must stay in sync with ParseConfig() in runtime.cpp.
   const string cfg =
       "# crumb project config\n"
       "name = " + name_text + "\n"
@@ -203,7 +217,7 @@ end
   return WriteLspFiles(project_dir);
 }
 
-// CLI entry point. Returns 0 on success, 1 on a command error.
+// CLI entry point: dispatch one command and return a process exit code.
 int CliRun(int argc, char* argv[]) {
   if (argc < 2) {
     Println(ANSI_BLUE, "Usage: ");
@@ -212,7 +226,7 @@ int CliRun(int argc, char* argv[]) {
     Println(ANSI_BLUE, "Commands:");
     Println(
       "  version            Show the crumb version\n"
-      "  create [name]      Create a new project (default: NewGame)\n"
+      "  create [name|path]  Create a new project (default: NewGame)\n"
       "  lsp [path]         Write .luarc.json and meta/crumb.lua for LuaLS\n"
       "  run [path]         Run a project (default: current directory)\n"
       "  dev [path]         Run a project in dev mode (currently same as run)\n"
@@ -269,6 +283,7 @@ int CliRun(int argc, char* argv[]) {
     return 0;
   }
 
+  // export [project] [-o path] [--template path] [--format single|pak]
   if (command.name == "export") {
     ExportOptions options;
     bool has_project = false;
@@ -328,6 +343,7 @@ int CliRun(int argc, char* argv[]) {
       return 1;
     }
 
+    // dev is currently an alias; live reload is not implemented.
     if (command.name == "dev")
       Println(ANSI_BLUE, "dev: live reload is not implemented yet; running once");
 
@@ -340,4 +356,4 @@ int CliRun(int argc, char* argv[]) {
   return 1;
 }
 
-} // namespace crumb
+}

@@ -12,14 +12,11 @@ import crumb.platform.window;
 import crumb.platform.input;
 import crumb.core.log;
 
+// Lua C functions. Every script value is converted to an engine type here; no
+// engine pointer is exposed to Lua.
 namespace {
 
 using namespace crumb;
-
-// Lua-facing tables. Convert all script values to engine types at this boundary.
-// ---------------------------------------------------------------------------
-// Small helpers
-// ---------------------------------------------------------------------------
 
 ui8 ClampByte(double value) {
   if (value < 0.0) return 0;
@@ -46,7 +43,8 @@ ui8 TableByte(lua_State* lua_state, int table, c_string field, int index, ui8 fa
   return fallback;
 }
 
-// Colors are packed as 0xRRGGBBAA, or a table { r, g, b, a } / { r=, g=, b=, a= }.
+// Colors are either 0xRRGGBBAA integers or tables { r, g, b, a } (named or
+// positional).
 Color ColorFromLua(lua_State* lua_state, int index, Color fallback) {
   if (lua_isnoneornil(lua_state, index))
     return fallback;
@@ -73,6 +71,7 @@ Color ColorFromLua(lua_State* lua_state, int index, Color fallback) {
   return fallback;
 }
 
+// Pack for the Lua-facing 0xRRGGBBAA convention.
 ui32 PackColor(ui8 r, ui8 g, ui8 b, ui8 a) {
   return (to_ui32(r) << 24)
        | (to_ui32(g) << 16)
@@ -115,10 +114,6 @@ input::InputState* InputUpvalue(lua_State* lua_state) {
   return static_cast<input::InputState*>(
     lua_touserdata(lua_state, lua_upvalueindex(1)));
 }
-
-// ---------------------------------------------------------------------------
-// gfx
-// ---------------------------------------------------------------------------
 
 int GfxClear(lua_State* lua_state) {
   if (Renderer* renderer = RendererUpvalue(lua_state)) {
@@ -174,8 +169,8 @@ int GfxSpr(lua_State* lua_state) {
   bool flip_y = false;
   Color tint = TRUE_WHITE;
 
-  // PICO-8 form: spr(index, x, y, w, h, flip_x, flip_y, color)
-  // Legacy form: spr(index, x, y, flip_x, flip_y, color)
+  // PICO-8 form: spr(index, x, y, w, h, flip_x, flip_y, color).
+  // Legacy form: spr(index, x, y, flip_x, flip_y, color).
   if (lua_isboolean(lua_state, 4) || lua_isnoneornil(lua_state, 4)) {
     flip_x = lua_toboolean(lua_state, 4) != 0;
     flip_y = lua_toboolean(lua_state, 5) != 0;
@@ -205,6 +200,7 @@ int GfxMeasureText(lua_State* lua_state) {
   return 1;
 }
 
+// Build the packed 0xRRGGBBAA integer used by the color arguments.
 int GfxRgb(lua_State* lua_state) {
   const ui8 r = ClampByte(luaL_checknumber(lua_state, 1));
   const ui8 g = ClampByte(luaL_checknumber(lua_state, 2));
@@ -240,6 +236,7 @@ int GfxScreenToGameY(lua_State* lua_state) {
   return 1;
 }
 
+// The palette mirrors crumb.gfx.color. Each closure captures the Renderer.
 void BindGfx(lua_State* lua_state, Renderer* renderer) {
   lua_newtable(lua_state);
   const int table = lua_gettop(lua_state);
@@ -275,10 +272,6 @@ void BindGfx(lua_State* lua_state, Renderer* renderer) {
 
   lua_setglobal(lua_state, "gfx");
 }
-
-// ---------------------------------------------------------------------------
-// input
-// ---------------------------------------------------------------------------
 
 int InputHeld(lua_State* lua_state) {
   input::InputState* state = InputUpvalue(lua_state);
@@ -407,7 +400,7 @@ void BindInput(lua_State* lua_state, input::InputState* input_state) {
   SetKey(lua_state, table, "CTRL",      "ctrl");
   SetKey(lua_state, table, "ALT",       "alt");
 
-  // PICO-8-style action buttons mapped to the Z / X / C keys.
+  // PICO-8-style action buttons.
   SetKey(lua_state, table, "BTN1", "z");
   SetKey(lua_state, table, "BTN2", "x");
   SetKey(lua_state, table, "BTN3", "c");
@@ -416,6 +409,7 @@ void BindInput(lua_State* lua_state, input::InputState* input_state) {
   SetInt(lua_state, table, "MOUSE_RIGHT",  1);
   SetInt(lua_state, table, "MOUSE_MIDDLE", 2);
 
+  // Generate KEY_A..KEY_Z and KEY_0..KEY_9 from the same name map.
   for (char character = 'a'; character <= 'z'; ++character) {
     char field[8] = { 'K', 'E', 'Y', '_', char(character - 'a' + 'A'), '\0' };
     char key[2]   = { character, '\0' };
@@ -430,10 +424,6 @@ void BindInput(lua_State* lua_state, input::InputState* input_state) {
 
   lua_setglobal(lua_state, "input");
 }
-
-// ---------------------------------------------------------------------------
-// crumb (engine / window)
-// ---------------------------------------------------------------------------
 
 int CrumbWidth(lua_State* lua_state) {
   lua_pushinteger(lua_state, static_cast<lua_Integer>(win::Width()));
@@ -474,10 +464,11 @@ void BindCrumb(lua_State* lua_state, Renderer* renderer) {
   lua_setglobal(lua_state, "crumb");
 }
 
-} // namespace
+}
 
 namespace crumb {
 
+// Bind all three tables on an initialized VM.
 bool BindLuaApi(LuaVM& vm, const ScriptContext& context) {
   lua_State* lua_state = vm.GetState();
   if (!lua_state) {
@@ -491,4 +482,4 @@ bool BindLuaApi(LuaVM& vm, const ScriptContext& context) {
   return true;
 }
 
-} // namespace crumb
+}

@@ -14,11 +14,11 @@ import crumb.platform.input;
 
 export namespace crumb::win {
 
-// Window title and initial client size.
+// Window title and initial client size, in pixels.
 struct WindowConfig {
   string title = "";
-  i32 width = 640;
-  i32 height = 360;
+  i32 width = 0;
+  i32 height = 0;
 
   void SetTitle(string_view value) {
     title.assign(value.data(), value.size());
@@ -38,8 +38,7 @@ struct WindowHooks {
   void (*cleanup)(void* user_data) = nullptr;
 };
 
-// Everything the window owns. The input state lives here instead of being a
-// module-level global; Runtime holds one WindowContext per process.
+// Everything the window owns. Runtime keeps exactly one of these.
 struct WindowContext {
   input::InputState input;
   WindowHooks hooks;
@@ -47,22 +46,21 @@ struct WindowContext {
 
 // Editor path: build the description, then run sokol-app blocking.
 void Run(WindowContext& context, const WindowConfig& cfg);
-// Template path: hand the description to sokol-app's generated entry point.
-// `context` and `cfg` must stay alive until sokol-app has created the window.
+
+// Template path: sokol-app reads the description from sokol_main(). The context
+// and config must stay alive until the window has been created.
 sapp_desc MakeDesc(WindowContext& context, const WindowConfig& cfg);
 
-// Current framebuffer size in pixels.
 i32  Width();
 i32  Height();
 void SetTitle(string_view title);
 void Quit();
 
-} // namespace crumb::win
+}
 
 namespace {
 
-// The editor build keeps a console attached unless it is a release build.
-// Templates never create one: they are GUI applications.
+// Editor debug builds keep a console; templates and release builds do not.
 #if defined(CRUMB_TEMPLATE)
 constexpr bool SHOW_CONSOLE = false;
 #elif defined(NDEBUG)
@@ -71,11 +69,11 @@ constexpr bool SHOW_CONSOLE = false;
 constexpr bool SHOW_CONSOLE = true;
 #endif
 
-// Decoded icon bytes. sokol-app reads them while creating the window, after
-// MakeDesc returns; keeping them in the module avoids a pointer to a dead
-// stack buffer without putting image data into WindowContext.
+// sokol-app reads the icon while creating the window, after MakeDesc returns.
+// Keeping the decoded pixels here avoids pointing at a dead stack buffer.
 std::vector<crumb::ui8> g_icon_pixels;
 
+// Reset input before user code can observe it.
 void OnInit(void* user_data) {
   auto* context = static_cast<crumb::win::WindowContext*>(user_data);
   crumb::input::Reset(context->input);
@@ -83,6 +81,7 @@ void OnInit(void* user_data) {
     context->hooks.init(context->hooks.userData);
 }
 
+// sokol's userdata frame callback has no dt parameter; query it instead.
 void OnFrame(void* user_data) {
   auto* context = static_cast<crumb::win::WindowContext*>(user_data);
   if (context->hooks.frame)
@@ -101,10 +100,11 @@ void OnEvent(const sapp_event* event, void* user_data) {
   crumb::input::HandleEvent(context->input, event);
 }
 
-} // namespace
+}
 
 namespace crumb::win {
 
+// Build the sokol description and keep the icon pixels alive for window creation.
 sapp_desc MakeDesc(WindowContext& context, const WindowConfig& cfg) {
   sapp_desc native {};
   native.init_userdata_cb     = &OnInit;
@@ -120,7 +120,6 @@ sapp_desc MakeDesc(WindowContext& context, const WindowConfig& cfg) {
   native.logger.func          = slog_func;
   native.win32.console_create = SHOW_CONSOLE;
 
-  // Decode the embedded icon once and keep the pixels alive for the process.
   const Asset icon_png = IconPng();
   i32 icon_width    = 0;
   i32 icon_height   = 0;
@@ -150,11 +149,13 @@ sapp_desc MakeDesc(WindowContext& context, const WindowConfig& cfg) {
   return native;
 }
 
+// Blocking editor loop; returns when the window closes.
 void Run(WindowContext& context, const WindowConfig& cfg) {
   const sapp_desc native = MakeDesc(context, cfg);
   sapp_run(&native);
 }
 
+// Current framebuffer size in pixels.
 i32 Width()  { return to_i32(sapp_width()); }
 i32 Height() { return to_i32(sapp_height()); }
 
@@ -165,4 +166,4 @@ void SetTitle(string_view title) {
 
 void Quit() { sapp_quit(); }
 
-} // namespace crumb::win
+}

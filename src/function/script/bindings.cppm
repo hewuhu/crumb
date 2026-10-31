@@ -7,14 +7,13 @@ import crumb.gfx.renderer;
 
 export namespace crumb {
 
+// Pointers captured by Lua closures. Both objects must outlive the LuaVM.
 struct ScriptContext {
-  // Both must outlive the LuaVM: closures keep these pointers as upvalues.
   Renderer* renderer = nullptr;
   input::InputState* input = nullptr;
 };
 
-// Registers the Lua-facing tables (gfx / input / crumb) on the VM's globals.
-// Call it after LuaVM::Init(), Renderer::Init() and window creation.
+// Create the gfx / input / crumb globals. Call after the window and renderer exist.
 bool BindLuaApi(LuaVM& vm, const ScriptContext& context);
 
-} // namespace crumb
+}

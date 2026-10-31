@@ -53,7 +53,8 @@ target("lua")
   add_cflags("/TC", { force = true })
   add_cxxflags("/TC", { force = true })
 
-target("crumb_editor")
+-- 带编辑器版本
+target("crumb")
   set_kind("binary")
   add_rules("crumb.assets")
   add_files("src/**.cpp", "src/**.cppm")
@@ -70,6 +71,7 @@ target("crumb_editor")
     set_strip("all")
   end
 
+-- window模板
 target("crumb_template_win64")
   set_kind("binary")
   add_rules("crumb.assets")

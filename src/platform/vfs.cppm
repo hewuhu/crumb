@@ -2,8 +2,7 @@ module;
 #include <filesystem>
 #include <fstream>
 #include <iterator>
-#include <string>
-#include <string_view>
+#include <expected>
 #include <system_error>
 #include <utility>
 #include <vector>
@@ -17,6 +16,7 @@ export namespace crumb::vfs {
 
 using std::vector;
 
+// How the current project is stored.
 enum class SourceKind : ui8 {
   DISK,
   PAK,
@@ -24,14 +24,15 @@ enum class SourceKind : ui8 {
 };
 
 // Read-only view over a project directory, a .pak file, or an executable with
-// an appended pak footer.
+// an appended pak + footer.
 class Vfs {
 public:
   bool MountDisk(string_view directory, string* error = nullptr);
   bool MountPakFile(string_view pak_path, string* error = nullptr);
   bool MountSelf(string_view exe_path, string* error = nullptr);
-  // Directory / .pak / .exe / .lua. .exe tries the footer, then a sibling pak,
-  // then the executable directory (dev template).
+
+  // Directory / .pak / .exe / .lua. A .exe falls back from footer to sibling
+  // pak to its own directory (dev template).
   bool MountAuto(string_view path, string* error = nullptr);
   void Unmount();
 
@@ -53,12 +54,13 @@ private:
   bool m_mounted = false;
 };
 
-} // namespace crumb::vfs
+}
 
 namespace crumb::vfs {
 
 namespace {
 
+// Read a file into a byte vector; the stream is always closed by RAII.
 bool ReadWholeFile(const std::filesystem::path& path, vector<ui8>& out,
                    string* error) {
   std::ifstream file(path, std::ios::binary);
@@ -75,18 +77,21 @@ bool ReadWholeFile(const std::filesystem::path& path, vector<ui8>& out,
   return true;
 }
 
+// Basic path guard: non-empty, no leading separator, and no ".." substring.
 bool ValidName(string_view name) {
   if (name.empty() || name.front() == '/' || name.front() == '\\')
     return false;
   return name.find("..") == string_view::npos;
 }
 
+// Join a validated logical name onto the disk root.
 std::filesystem::path Join(const string& root, string_view name) {
   return std::filesystem::path(root) / std::filesystem::path(string(name));
 }
 
-} // namespace
+}
 
+// Mount a project directory; names are resolved relative to it.
 bool Vfs::MountDisk(string_view directory, string* error) {
   std::error_code ec;
   const std::filesystem::path path{ string(directory) };
@@ -101,6 +106,7 @@ bool Vfs::MountDisk(string_view directory, string* error) {
   return true;
 }
 
+// Read and parse a standalone .pak file.
 bool Vfs::MountPakFile(string_view pak_path, string* error) {
   vector<ui8> bytes;
   if (!ReadWholeFile(std::filesystem::path(string(pak_path)), bytes, error))
@@ -108,6 +114,7 @@ bool Vfs::MountPakFile(string_view pak_path, string* error) {
   return MountBytes(std::move(bytes), SourceKind::PAK, string(pak_path), error);
 }
 
+// Read the executable, cut out the pak described by its footer, and parse it.
 bool Vfs::MountSelf(string_view exe_path, string* error) {
   vector<ui8> bytes;
   if (!ReadWholeFile(std::filesystem::path(string(exe_path)), bytes, error))
@@ -126,6 +133,7 @@ bool Vfs::MountSelf(string_view exe_path, string* error) {
   return MountBytes(std::move(pak_bytes), SourceKind::SELF, string(exe_path), error);
 }
 
+// Parse an archive and only commit it to this Vfs on success.
 bool Vfs::MountBytes(vector<ui8> bytes, SourceKind kind, string source,
                      string* error) {
   pak::Archive archive;
@@ -163,7 +171,6 @@ bool Vfs::MountAuto(string_view path, string* error) {
       if (std::filesystem::is_regular_file(sibling, ec))
         return MountPakFile(sibling.string(), error);
 
-      // Dev template: no footer/pak, fall back to the executable directory.
       return MountDisk(target.parent_path().string(), error);
     }
   }
@@ -172,6 +179,7 @@ bool Vfs::MountAuto(string_view path, string* error) {
   return false;
 }
 
+// Drop the archive and return to the default DISK state.
 void Vfs::Unmount() {
   m_kind = SourceKind::DISK;
   m_root.clear();
@@ -179,6 +187,7 @@ void Vfs::Unmount() {
   m_mounted = false;
 }
 
+// Existence check; invalid names are treated as missing.
 bool Vfs::Exists(string_view name) const {
   if (!m_mounted || !ValidName(name))
     return false;
@@ -189,6 +198,7 @@ bool Vfs::Exists(string_view name) const {
   return m_archive.Contains(name);
 }
 
+// Read a whole logical file; all failures are reported as Error values.
 Result<vector<ui8>> Vfs::ReadBinary(string_view name) const {
   if (!m_mounted) {
     return std::unexpected<Error> {
@@ -218,6 +228,7 @@ Result<vector<ui8>> Vfs::ReadBinary(string_view name) const {
   return bytes;
 }
 
+// Byte-for-byte text read; BOM removal is left to the caller.
 Result<string> Vfs::ReadText(string_view name) const {
   const Result<vector<ui8>> bytes = ReadBinary(name);
   if (!bytes)
@@ -225,4 +236,4 @@ Result<string> Vfs::ReadText(string_view name) const {
   return string(reinterpret_cast<const char*>(bytes->data()), bytes->size());
 }
 
-} // namespace crumb::vfs
+}

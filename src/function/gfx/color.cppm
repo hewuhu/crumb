@@ -3,7 +3,8 @@ import crumb.core.types;
 
 export namespace crumb {
 
-// 8-bit RGBA color, laid out exactly like one packed 0xRRGGBBAA value.
+// 8-bit RGBA. Memory order is R, G, B, A; this is not the 0xRRGGBBAA integer
+// used by the Lua API.
 struct Color {
   ui8 r = 0x00;
   ui8 g = 0x00;
@@ -11,6 +12,7 @@ struct Color {
   ui8 a = 0xFF;
 };
 
+// PICO-8 palette, plus two utility colors outside it.
 inline constexpr Color BLACK       { 0x00, 0x00, 0x00, 0xFF };
 inline constexpr Color DARK_BLUE   { 0x1D, 0x2B, 0x53, 0xFF };
 inline constexpr Color DARK_PURPLE { 0x7E, 0x25, 0x53, 0xFF };
@@ -28,8 +30,7 @@ inline constexpr Color INDIGO      { 0x83, 0x76, 0x9C, 0xFF };
 inline constexpr Color PINK        { 0xFF, 0x77, 0xA8, 0xFF };
 inline constexpr Color PEACH       { 0xFF, 0xCC, 0xAA, 0xFF };
 
-// Utility colors outside the 16-color palette.
 inline constexpr Color TRUE_WHITE  { 0xFF, 0xFF, 0xFF, 0xFF };
 inline constexpr Color TRANSPARENT { 0x00, 0x00, 0x00, 0x00 };
 
-} // namespace crumb
+}

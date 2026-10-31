@@ -5,7 +5,7 @@ import crumb.core.types;
 
 export namespace crumb {
 
-// Small clock with fixed-step accumulator for _fixed_update.
+// Frame clock with a fixed-step accumulator for _fixed_update.
 class Time {
 private:
   i32 m_maxSteps = 0;
@@ -20,7 +20,7 @@ public:
   explicit Time(double fixed_dt = 1.0 / 60.0, double max_frame = 0.25, i32 max_steps = 5)
     : m_fixedDelta(fixed_dt), m_maxFrameDelta(max_frame), m_maxSteps(max_steps) {}
 
-  // Clamp the raw frame time and add it to the fixed-step accumulator.
+  // Clamp the frame delta, advance total time, and feed the accumulator.
   double Tick(double raw_dt) {
     if (m_paused)
       return 0.0;
@@ -33,7 +33,8 @@ public:
     return dt;
   }
 
-  // Call update() at most maxSteps times to catch up on fixed steps.
+  // Run at most m_maxSteps callbacks. When the cap is hit, the remaining
+  // backlog is dropped to avoid a death spiral.
   template <typename Fn>
   void ConsumeFixed(Fn&& update) {
     if (m_paused)
@@ -53,6 +54,7 @@ public:
   inline double GetTotalTime() const { return m_totalTime; }
   inline ui64 GetFrameCount() const { return m_frameCount; }
 
+  // Fraction of the next fixed step already accumulated, for interpolation.
   double Alpha() { return m_accumulator / m_fixedDelta; }
 
   bool IsPaused() const { return m_paused; }

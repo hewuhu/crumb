@@ -1,13 +1,12 @@
 module;
-#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
-#include <string>
 #include <string_view>
 #include <system_error>
 #include <utility>
 #include <vector>
+#include <expected>
 
 export module crumb.editor.exporter;
 import crumb.core.types;
@@ -27,18 +26,20 @@ enum class ExportFormat : ui8 {
 
 struct ExportOptions {
   string projectPath;
+
   // Empty means <project>/dist/<project>.exe.
   string outputPath;
-  // Empty means the crumb_template_win64.exe next to the editor.
+
+  // Empty means crumb_template_win64.exe next to the editor.
   string templatePath;
   ExportFormat format = ExportFormat::SINGLE_FILE;
 };
 
-// Copies the template, packs the project files, and writes either a single
-// executable (template + pak + footer) or exe + pak. Returns the exe path.
+// Copy the template, pack the project, and write the requested layout. Returns
+// the executable path on success.
 Result<string> ExportProject(ExportOptions options);
 
-} // namespace crumb
+}
 
 namespace crumb {
 
@@ -47,6 +48,7 @@ namespace {
 constexpr c_string TEMPLATE_NAME = "crumb_template_win64.exe";
 constexpr c_string MAIN_SCRIPT   = "main.lua";
 
+// Read/write helpers used by the export pipeline.
 bool ReadWholeFile(const std::filesystem::path& path, vector<ui8>& out,
                    string* error) {
   std::ifstream file(path, std::ios::binary);
@@ -79,16 +81,19 @@ bool WriteWholeFile(const std::filesystem::path& path, const vector<ui8>& bytes,
   return true;
 }
 
+// Directories that never belong in an exported game.
 bool SkipDirectory(string_view name) {
   return name == ".git" || name == "build" || name == "dist" ||
          name == "meta" || name == "templates" || name == ".vscode";
 }
 
+// Only the asset types the runtime currently understands are packed.
 bool KeepFile(const std::filesystem::path& path) {
   const string extension = path.extension().string();
   return extension == ".lua" || extension == ".png" || extension == ".cfg";
 }
 
+// Walk the project, skip build/VCS directories, and collect packable files.
 Result<vector<pak::SourceFile>> CollectFiles(
   const std::filesystem::path& project_dir) {
   vector<pak::SourceFile> files;
@@ -128,6 +133,7 @@ Result<vector<pak::SourceFile>> CollectFiles(
   return files;
 }
 
+// Accept a directory or a main.lua path and require main.lua to exist.
 Result<std::filesystem::path> FindProjectDirectory(string_view project_path) {
   namespace fs = std::filesystem;
   std::error_code ec;
@@ -139,11 +145,13 @@ Result<std::filesystem::path> FindProjectDirectory(string_view project_path) {
       MakeError(ErrorCode::ERROR_IO, "cannot resolve project: " + ec.message()) };
   }
 
+  const fs::path absolute_path = fs::absolute(path, ec);
+  if (!ec)
+    path = absolute_path;
+
   if (fs::is_regular_file(path, ec) && path.extension() == ".lua")
     path = path.parent_path();
 
-  // A trailing separator makes filename() empty; drop it before using the
-  // directory name as the default output name.
   while (path.filename().empty() && path.has_parent_path() &&
          path.parent_path() != path)
     path = path.parent_path();
@@ -163,6 +171,7 @@ Result<std::filesystem::path> FindProjectDirectory(string_view project_path) {
   return path;
 }
 
+// Use --template when given, otherwise the template next to the editor.
 Result<std::filesystem::path> FindTemplate(const ExportOptions& options) {
   namespace fs = std::filesystem;
   std::error_code ec;
@@ -187,6 +196,7 @@ Result<std::filesystem::path> FindTemplate(const ExportOptions& options) {
               "build the template target or pass --template") };
 }
 
+// Default output name, ignoring trailing separators.
 string ProjectStem(const std::filesystem::path& project_dir) {
   std::filesystem::path path = project_dir;
   while (path.filename().empty() && path.has_parent_path() &&
@@ -198,6 +208,7 @@ string ProjectStem(const std::filesystem::path& project_dir) {
   return name;
 }
 
+// Resolve -o: a directory gets <stem>.exe, a bare name gets ".exe" appended.
 Result<std::filesystem::path> MakeOutputPath(
   const std::filesystem::path& project_dir, string_view output_path) {
   namespace fs = std::filesystem;
@@ -225,7 +236,7 @@ Result<std::filesystem::path> MakeOutputPath(
   return output;
 }
 
-} // namespace
+}
 
 Result<string> ExportProject(ExportOptions options) {
   namespace fs = std::filesystem;
@@ -268,9 +279,10 @@ Result<string> ExportProject(ExportOptions options) {
 
   string write_error;
   if (options.format == ExportFormat::SINGLE_FILE) {
+    // Layout: template bytes, pak bytes, then the CRUMBEND footer.
     vector<ui8> image = std::move(template_bytes);
-    const ui32 pak_offset = static_cast<ui32>(image.size());
-    const ui32 pak_size = static_cast<ui32>(pak_image->size());
+    const ui32 pak_offset = to_ui32(image.size());
+    const ui32 pak_size = to_ui32(pak_image->size());
     const ui32 pak_crc = pak::Crc32(pak_image->data(), pak_image->size());
     image.insert(image.end(), pak_image->begin(), pak_image->end());
     pak::AppendFooter(image, pak_offset, pak_size, pak_crc);
@@ -280,6 +292,7 @@ Result<string> ExportProject(ExportOptions options) {
         MakeError(ErrorCode::ERROR_IO, write_error) };
     }
   } else {
+    // Side-by-side layout: <name>.exe plus <name>.pak.
     if (!WriteWholeFile(*output, template_bytes, &write_error)) {
       return std::unexpected<Error> {
         MakeError(ErrorCode::ERROR_IO, write_error) };
@@ -297,4 +310,4 @@ Result<string> ExportProject(ExportOptions options) {
   return output->string();
 }
 
-} // namespace crumb
+}

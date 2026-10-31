@@ -14,6 +14,7 @@ import crumb.core.types;
 
 export namespace crumb {
 
+// ANSI escape sequence wrapper; an empty code means plain output.
 struct AnsiColor {
   string_view code;
 };
@@ -25,6 +26,8 @@ inline constexpr AnsiColor ANSI_YELLOW {"\x1b[33m"};
 inline constexpr AnsiColor ANSI_BLUE   {"\x1b[94m"};
 inline constexpr AnsiColor ANSI_RESET  {"\x1b[0m"};
 
+// Print one line, using color only when stdout is an interactive terminal.
+// On Windows, virtual-terminal processing is enabled once on first use.
 template <typename... Args>
 void Println(AnsiColor color, std::format_string<Args...> fmt, Args&&... args) {
   static const bool use_color = [] {
@@ -52,4 +55,4 @@ void Println(std::format_string<Args...> fmt, Args&&... args) {
   Println(ANSI_WHITE, fmt, std::forward<Args>(args)...);
 }
 
-} // namespace crumb
+}

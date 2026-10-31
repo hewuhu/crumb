@@ -16,27 +16,26 @@ import crumb.core.types;
 
 export namespace crumb::platform {
 
-// Where the exported template should look for its project.
-//
-// Windows GUI applications do not get a usable argv[] from main(), so the
-// template entry parses the real command line itself and falls back to the
-// directory that contains the executable.
+// Where the exported template looks for its project. Windows GUI applications
+// do not get a useful argv[] from main(), so the command line is parsed here.
 struct LaunchOptions {
   string executablePath;
   string executableDir;
-  // Empty means "start from executablePath" (footer / sibling pak / exe dir).
+
+  // Empty means "inspect executablePath" (footer, sibling pak, or exe dir).
   string projectPath;
 };
 
 LaunchOptions MakeLaunchOptions();
 
-} // namespace crumb::platform
+}
 
 #ifdef _WIN32
 
 namespace {
 using namespace crumb;
 
+// Convert a null-terminated UTF-16 string to UTF-8.
 string WideToUtf8(const wchar_t* text) {
   if (text == nullptr)
     return {};
@@ -55,6 +54,7 @@ string U8ToString(const std::u8string& text) {
   return string(reinterpret_cast<const char*>(text.data()), text.size());
 }
 
+// Grow the buffer until GetModuleFileNameW reports a non-truncated path.
 std::filesystem::path ExecutablePath() {
   std::wstring buffer(MAX_PATH, L'\0');
   for (;;) {
@@ -71,6 +71,8 @@ std::filesystem::path ExecutablePath() {
   return std::filesystem::path(buffer);
 }
 
+// CommandLineToArgvW handles the quoting that raw GetCommandLineW does not.
+// The last --project / --project= value wins.
 string ProjectArgument() {
   int argc = 0;
   LPWSTR* argv = ::CommandLineToArgvW(::GetCommandLineW(), &argc);
@@ -90,10 +92,11 @@ string ProjectArgument() {
   return project;
 }
 
-} // namespace
+}
 
 namespace crumb::platform {
 
+// Windows: derive both paths from the running executable.
 LaunchOptions MakeLaunchOptions() {
   LaunchOptions options;
   const std::filesystem::path exe = ExecutablePath();
@@ -103,12 +106,14 @@ LaunchOptions MakeLaunchOptions() {
   return options;
 }
 
-} // namespace crumb::platform
+}
 
 #else
 
 namespace crumb::platform {
 
+// Non-Windows fallback for callers that build on other platforms; pass
+// --project explicitly, because the current build has no Windows template here.
 LaunchOptions MakeLaunchOptions() {
   LaunchOptions options;
   std::error_code ec;
@@ -120,6 +125,6 @@ LaunchOptions MakeLaunchOptions() {
   return options;
 }
 
-} // namespace crumb::platform
+}
 
 #endif

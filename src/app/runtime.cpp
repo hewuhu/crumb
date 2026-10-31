@@ -29,7 +29,7 @@ using std::vector;
 
 namespace {
 
-// Trim leading/trailing whitespace.
+// Trim ASCII whitespace from both ends.
 string_view Trim(string_view text) {
   while (!text.empty() &&
          std::isspace(to_ui8(text.front()))) {
@@ -42,7 +42,7 @@ string_view Trim(string_view text) {
   return text;
 }
 
-// Drop the UTF-8 BOM that Windows editors like to add.
+// Windows editors may prepend a UTF-8 BOM, which Lua rejects.
 void StripBom(string& text) {
   if (text.size() >= 3 &&
       to_ui8(text[0]) == 0xEF &&
@@ -52,7 +52,7 @@ void StripBom(string& text) {
   }
 }
 
-// Parse a positive integer, or return the fallback value.
+// Parse a decimal integer in [1, max_value]; return fallback otherwise.
 i32 ParsePositive(string_view text, i32 fallback, i32 max_value) {
   i32 value = 0;
   c_string begin = text.data();
@@ -65,7 +65,7 @@ i32 ParsePositive(string_view text, i32 fallback, i32 max_value) {
   return value;
 }
 
-// Reads simple key = value pairs from a crumb.cfg body.
+// Read simple key = value lines. '#' starts a comment; unknown keys are ignored.
 VoidResult ParseConfig(string_view text, ProjectConfig& config) {
   usize cursor = 0;
   while (cursor < text.size()) {
@@ -111,9 +111,9 @@ VoidResult ParseConfig(string_view text, ProjectConfig& config) {
   return {};
 }
 
-} // namespace
+}
 
-// Resolves a project directory, .lua, .pak, or executable with a pak footer.
+// Probe the path, copy the mount source into the config, and verify main.lua.
 Result<ProjectConfig> ResolveProject(string_view path) {
   namespace fs = std::filesystem;
 
@@ -197,6 +197,7 @@ Result<ProjectConfig> ResolveProject(string_view path) {
   return config;
 }
 
+// Invalid fixed-step values fall back to 60 Hz with a 5-step catch-up cap.
 Runtime::Runtime(ProjectConfig config)
   : m_config(std::move(config)),
     m_time(1.0 / to_double(
@@ -205,7 +206,7 @@ Runtime::Runtime(ProjectConfig config)
            m_config.maxFixedSteps > 0 ? m_config.maxFixedSteps : 5) {
 }
 
-// Editor path: initialize Lua, open the window, and block until the game quits.
+// Blocking editor path; returns a process exit code.
 int Runtime::RunBlocking() {
   if (m_config.sourcePath.empty()) {
     Logger::Error("runtime: no project source");
@@ -218,7 +219,7 @@ int Runtime::RunBlocking() {
   return m_failed ? 1 : 0;
 }
 
-// Template path: describe the window that sokol-app should create.
+// The window uses the logical resolution multiplied by windowScale.
 win::WindowConfig Runtime::MakeWindowConfig() const {
   win::WindowConfig window;
   window.SetTitle(m_config.title);
@@ -228,6 +229,7 @@ win::WindowConfig Runtime::MakeWindowConfig() const {
   return window;
 }
 
+// Route sokol-app callbacks back to this instance through user_data.
 void Runtime::Prepare() {
   m_window.hooks.userData = this;
   m_window.hooks.init = &Runtime::OnInit;
@@ -235,6 +237,7 @@ void Runtime::Prepare() {
   m_window.hooks.cleanup = &Runtime::OnCleanup;
 }
 
+// Exposed so the template entry can pass the context to sokol-app.
 win::WindowContext& Runtime::Window() {
   return m_window;
 }
@@ -251,7 +254,7 @@ void Runtime::OnCleanup(void* user_data) {
   static_cast<Runtime*>(user_data)->Cleanup();
 }
 
-// Called once after the window is created.
+// Mount the project, initialize Lua/renderer, bind the API, then run main.lua.
 void Runtime::Start() {
   string mount_error;
   bool mounted = false;
@@ -281,11 +284,12 @@ void Runtime::Start() {
     return;
   }
 
-  // Optional project sprite sheet; failure keeps the checker placeholder.
+  // sprites.png is optional; failure keeps the checkerboard placeholder.
   const Result<vector<ui8>> sprites = m_vfs.ReadBinary(m_config.spritesPath);
   if (sprites)
     m_renderer.LoadSpritesFromMemory(sprites->data(), sprites->size());
 
+  // The closures keep raw pointers; both objects outlive the Lua VM.
   const ScriptContext context { &m_renderer, &m_window.input };
   if (!BindLuaApi(m_lua, context)) {
     Fail("Lua API binding failed");
@@ -319,7 +323,7 @@ void Runtime::Start() {
   m_started = true;
 }
 
-// Fixed updates first, then one variable update, then draw.
+// Run fixed updates first, then one variable update, then draw.
 void Runtime::Frame(double raw_dt) {
   if (!m_started || m_failed)
     return;
@@ -328,7 +332,6 @@ void Runtime::Frame(double raw_dt) {
   string error;
 
   if (m_hasFixedUpdate) {
-    // Catch up on fixed steps first; _update still runs once per frame.
     bool fixed_failed = false;
     m_time.ConsumeFixed([&](double fixed_dt) {
       if (fixed_failed)
@@ -337,6 +340,7 @@ void Runtime::Frame(double raw_dt) {
         fixed_failed = true;
     });
 
+    // A script error skips further fixed updates and closes the window.
     if (fixed_failed) {
       Fail(error);
       return;
@@ -359,7 +363,7 @@ void Runtime::Frame(double raw_dt) {
   m_renderer.EndFrame();
 }
 
-// Runs the optional _cleanup callback and releases renderer resources.
+// _cleanup runs at most once; renderer and VFS are always released.
 void Runtime::Cleanup() {
   if (m_started && m_hasCleanup) {
     string error;
@@ -372,12 +376,12 @@ void Runtime::Cleanup() {
   m_started = false;
 }
 
-// Logs the error once and requests a clean window shutdown.
+// Log and request shutdown; GUI builds also show a dialog when a project path
+// exists, because stderr is invisible there.
 void Runtime::Fail(string_view message) {
   Logger::Error("runtime: {}", message);
 #ifdef CRUMB_TEMPLATE
-  // A GUI build has no console; show the first real failure instead of a window
-  // that opens and immediately closes.
+
   if (!m_config.sourcePath.empty())
     platform::ShowError("Crumb", message);
 #endif
@@ -385,6 +389,7 @@ void Runtime::Fail(string_view message) {
   win::Quit();
 }
 
+// Resolve and run a project on the calling thread.
 int RunProject(string_view path) {
   const Result<ProjectConfig> result = ResolveProject(path);
   if (!result) {
@@ -396,4 +401,4 @@ int RunProject(string_view path) {
   return runtime.RunBlocking();
 }
 
-} // namespace crumb
+}
